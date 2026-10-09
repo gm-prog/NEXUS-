@@ -1,0 +1,192 @@
+{
+  "schema_version": "1.0.0",
+  "case_id": "INC-019",
+  "title": "Database Lock Contention from Long-Running Analytics Query",
+  "category": "db_lock_contention",
+  "scenario_type": "single_cause",
+  "difficulty": "medium",
+  "description": "An analytics team ran a long-running ad-hoc query (full table scan on orders) that held locks blocking all order-service writes. Order service shows deadlock errors and timeouts. The query was started manually, not via deployment.",
+  "environment": {
+    "name": "production",
+    "region": "us-east-1",
+    "cluster": "prod-cluster-1"
+  },
+  "incident_window": {
+    "start": "2024-02-02T15:00:00Z",
+    "end": "2024-02-02T15:45:00Z",
+    "investigation_cutoff": "2024-02-02T15:10:00Z"
+  },
+  "initial_symptoms": [
+    "Order service: deadlock detected errors",
+    "Order creation latency p99: 100ms → 30s",
+    "Database shows long-running query on orders table",
+    "No deployment or code change"
+  ],
+  "affected_services": [
+    {
+      "service_id": "svc-003-order",
+      "service_name": "order-service",
+      "impact": "primary"
+    }
+  ],
+  "evidence_catalog": [
+    {
+      "evidence_id": "ev-001-metric-deadlocks",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:db_deadlocks{service=order-service}[5m]",
+      "event_time": "2024-02-02T15:00:00Z",
+      "collection_time": "2024-02-02T15:10:00Z",
+      "time_window_start": "2024-02-02T15:00:00Z",
+      "time_window_end": "2024-02-02T15:10:00Z",
+      "service_id": "svc-003-order",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Deadlock count spiked from 0 to 50/min at 15:00 UTC",
+      "query_reference": "SELECT deadlock_count FROM db_metrics WHERE service='order-service'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate deadlock metrics"
+    },
+    {
+      "evidence_id": "ev-002-log-deadlock",
+      "evidence_type": "log",
+      "source": "telemetry_storage",
+      "source_reference": "order-service-logs",
+      "event_time": "2024-02-02T15:01:00Z",
+      "collection_time": "2024-02-02T15:10:00Z",
+      "service_id": "svc-003-order",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Order service logs: 'Deadlock found when trying to get lock; try restarting transaction'",
+      "query_reference": "SELECT * FROM logs WHERE service='order-service' AND message LIKE '%Deadlock%'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate deadlock error logs"
+    },
+    {
+      "evidence_id": "ev-003-pg-stat-activity",
+      "evidence_type": "log",
+      "source": "telemetry_storage",
+      "source_reference": "postgres-pg_stat_activity",
+      "event_time": "2024-02-02T15:00:00Z",
+      "collection_time": "2024-02-02T15:10:00Z",
+      "service_id": "svc-007-db-primary",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "pg_stat_activity shows long-running query: 'SELECT * FROM orders WHERE created_at > ...' running for 15min, holding locks",
+      "query_reference": "SELECT * FROM pg_stat_activity WHERE state='active' AND query LIKE '%FROM orders%'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate pg_stat_activity with long query"
+    },
+    {
+      "evidence_id": "ev-004-query-origin",
+      "evidence_type": "verification_result",
+      "source": "application_state",
+      "source_reference": "query:pg_stat_activity.application_name=analytics-tool",
+      "event_time": "2024-02-02T15:00:00Z",
+      "collection_time": "2024-02-02T15:10:00Z",
+      "service_id": "svc-007-db-primary",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Long-running query originated from analytics-tool (application_name), user 'analytics-engineer-1'",
+      "query_reference": "SELECT application_name, usename FROM pg_stat_activity WHERE pid=<long_query_pid>",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will simulate query origin identification"
+    },
+    {
+      "evidence_id": "ev-005-no-deployments",
+      "evidence_type": "deployment",
+      "source": "ci_system",
+      "source_reference": "deployment-query:last-1h",
+      "event_time": "2024-02-02T15:00:00Z",
+      "collection_time": "2024-02-02T15:10:00Z",
+      "service_id": "svc-003-order",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "No deployments in last hour",
+      "query_reference": "GET /api/v1/deployments?since=1h",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create empty deployment list"
+    }
+  ],
+  "changes": [],
+  "ground_truth": {
+    "root_cause_type": "resource_exhaustion",
+    "primary_service_id": "svc-003-order",
+    "trigger_change_id": "",
+    "causal_chain": [
+      {
+        "from_type": "trigger",
+        "from_description": "Ad-hoc analytics query (full table scan on orders) started manually",
+        "to_type": "mechanism",
+        "to_description": "Query holds locks on orders table, blocking all writes; causes deadlocks on concurrent writes",
+        "evidence_ids": ["ev-003-pg-stat-activity", "ev-004-query-origin"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "mechanism",
+        "from_description": "Order service writes block on locks, eventually deadlock",
+        "to_type": "symptom",
+        "to_description": "Deadlock errors, write latency spikes to 30s",
+        "evidence_ids": ["ev-001-metric-deadlocks", "ev-002-log-deadlock"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "symptom",
+        "from_description": "Order creation fails with deadlock",
+        "to_type": "impact",
+        "to_description": "Orders cannot be placed; revenue impact",
+        "evidence_ids": ["ev-001-metric-deadlocks"],
+        "confidence": 1.0
+      }
+    ],
+    "ambiguity_note": "",
+    "insufficient_evidence_note": "",
+    "contributing_factors": ["No query timeout for ad-hoc queries", "No read replica for analytics", "Analytics team has direct production DB access", "Missing lock monitoring/alerting"]
+  },
+  "expected_diagnosis": {
+    "root_cause_type_match": true,
+    "service_localization_match": true,
+    "change_attribution_match": false,
+    "min_confidence": 0.95,
+    "must_include_evidence_ids": ["ev-001-metric-deadlocks", "ev-002-log-deadlock", "ev-003-pg-stat-activity", "ev-004-query-origin"],
+    "must_not_claim": ["Order service code caused deadlocks", "Deployment caused the issue"]
+  },
+  "misleading_or_confounding_signals": [
+    "Deadlock errors appear in order-service (but caused by external query)",
+    "No recent deployment (but manual query caused it)"
+  ],
+  "acceptable_alternatives": [],
+  "required_checks": [
+    {
+      "check_id": "chk-001-pg-stat-activity",
+      "description": "Check pg_stat_activity for long-running queries",
+      "tool": "query_database",
+      "expected_outcome": "Long-running SELECT on orders table from analytics-tool",
+      "critical": true
+    },
+    {
+      "check_id": "chk-002-kill-query",
+      "description": "Kill long-running query and observe recovery",
+      "tool": "execute_db_command",
+      "expected_outcome": "Deadlocks stop immediately after query killed",
+      "critical": true
+    }
+  ],
+  "remediation_guidance": {
+    "suggestion": "Kill long-running query; revoke direct production DB access for analytics; provide read replica; add query timeout",
+    "risk_level": "low",
+    "test_plan": [
+      "Kill query in production",
+      "Verify order service recovers",
+      "Set up read replica for analytics",
+      "Revoke direct production access"
+    ],
+    "rollback_plan": "Kill query (immediate recovery)"
+  },
+  "tags": ["db-lock-contention", "ad-hoc-query", "analytics", "deadlock", "order-service", "manual-action"]
+}

@@ -1,0 +1,207 @@
+{
+  "schema_version": "1.0.0",
+  "case_id": "INC-004",
+  "title": "Redis Outage Causes Cache Miss Storm in Product Service",
+  "category": "redis_outage",
+  "scenario_type": "single_cause",
+  "difficulty": "medium",
+  "description": "Redis cluster experienced a network partition causing primary node failover. During the 45-second failover, product-service experienced a cache miss storm as all requests fell through to the database, overwhelming it.",
+  "environment": {
+    "name": "production",
+    "region": "us-east-1",
+    "cluster": "prod-cluster-1"
+  },
+  "incident_window": {
+    "start": "2024-01-18T16:00:00Z",
+    "end": "2024-01-18T16:30:00Z",
+    "investigation_cutoff": "2024-01-18T16:10:00Z"
+  },
+  "initial_symptoms": [
+    "Product service latency p99: 50ms → 5s",
+    "Database CPU spike to 100%",
+    "Redis client logs show connection errors",
+    "Cache hit rate dropped from 95% to 5%"
+  ],
+  "affected_services": [
+    {
+      "service_id": "svc-006-product",
+      "service_name": "product-service",
+      "impact": "primary"
+    },
+    {
+      "service_id": "svc-007-db-primary",
+      "service_name": "postgresql-primary",
+      "impact": "downstream"
+    }
+  ],
+  "evidence_catalog": [
+    {
+      "evidence_id": "ev-001-metric-cache-hit-rate",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:cache_hit_rate{service=product-service}[1m]",
+      "event_time": "2024-01-18T16:00:00Z",
+      "collection_time": "2024-01-18T16:10:00Z",
+      "time_window_start": "2024-01-18T16:00:00Z",
+      "time_window_end": "2024-01-18T16:10:00Z",
+      "service_id": "svc-006-product",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Cache hit rate for product-service dropped from 95% to 5% at 16:00 UTC",
+      "query_reference": "SELECT cache_hits / (cache_hits + cache_misses) FROM redis_metrics WHERE service='product-service'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate Redis cache hit/miss metrics"
+    },
+    {
+      "evidence_id": "ev-002-log-redis-failover",
+      "evidence_type": "log",
+      "source": "telemetry_storage",
+      "source_reference": "redis-cluster-logs",
+      "event_time": "2024-01-18T16:00:15Z",
+      "collection_time": "2024-01-18T16:10:00Z",
+      "service_id": "svc-006-product",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Redis logs show primary node failure and failover election starting at 16:00:15 UTC",
+      "query_reference": "SELECT * FROM redis_logs WHERE message LIKE '%failover%' OR message LIKE '%election%'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate Redis cluster failover logs"
+    },
+    {
+      "evidence_id": "ev-003-metric-db-cpu",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:db_cpu{instance=postgresql-primary}[1m]",
+      "event_time": "2024-01-18T16:00:30Z",
+      "collection_time": "2024-01-18T16:10:00Z",
+      "time_window_start": "2024-01-18T16:00:30Z",
+      "time_window_end": "2024-01-18T16:10:00Z",
+      "service_id": "svc-007-db-primary",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Primary database CPU spiked from 40% to 100% within 30 seconds of Redis failover",
+      "query_reference": "SELECT max(cpu_usage_percent) FROM db_metrics WHERE instance='postgresql-primary'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate database CPU metrics"
+    },
+    {
+      "evidence_id": "ev-004-trace-cache-miss",
+      "evidence_type": "trace",
+      "source": "telemetry_storage",
+      "source_reference": "trace_id=ghi789",
+      "event_time": "2024-01-18T16:01:00Z",
+      "collection_time": "2024-01-18T16:10:00Z",
+      "time_window_start": "2024-01-18T16:01:00Z",
+      "time_window_end": "2024-01-18T16:02:00Z",
+      "service_id": "svc-006-product",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Traces show Redis GET returning connection error, followed by DB query for same key",
+      "query_reference": "GET /api/v1/traces/ghi789",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate traces showing cache miss fallback to DB"
+    },
+    {
+      "evidence_id": "ev-005-config-cache-ttl",
+      "evidence_type": "configuration",
+      "source": "application_state",
+      "source_reference": "config:product-service.cache.ttl=300",
+      "event_time": "2024-01-18T16:00:00Z",
+      "collection_time": "2024-01-18T16:10:00Z",
+      "service_id": "svc-006-product",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Cache TTL configured at 300s; no circuit breaker or fallback for Redis unavailability",
+      "query_reference": "GET /api/v1/config/product-service",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create configuration record"
+    }
+  ],
+  "changes": [],
+  "ground_truth": {
+    "root_cause_type": "dependency_failure",
+    "primary_service_id": "svc-006-product",
+    "trigger_change_id": "",
+    "causal_chain": [
+      {
+        "from_type": "trigger",
+        "from_description": "Redis primary node network partition triggered failover",
+        "to_type": "mechanism",
+        "to_description": "45-second Redis unavailability caused cache miss storm",
+        "evidence_ids": ["ev-002-log-redis-failover"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "mechanism",
+        "from_description": "All product requests fell through to database simultaneously",
+        "to_type": "symptom",
+        "to_description": "Database overwhelmed by 20x normal query load",
+        "evidence_ids": ["ev-001-metric-cache-hit-rate", "ev-003-metric-db-cpu", "ev-004-trace-cache-miss"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "symptom",
+        "from_description": "Database CPU at 100%, queries queued",
+        "to_type": "impact",
+        "to_description": "Product service latency increased 100x, timeouts cascaded",
+        "evidence_ids": ["ev-003-metric-db-cpu"],
+        "confidence": 1.0
+      }
+    ],
+    "ambiguity_note": "",
+    "insufficient_evidence_note": "",
+    "contributing_factors": ["No circuit breaker for Redis", "Cache TTL too short for failover duration", "No graceful degradation (stale cache read)"]
+  },
+  "expected_diagnosis": {
+    "root_cause_type_match": true,
+    "service_localization_match": true,
+    "change_attribution_match": false,
+    "min_confidence": 0.85,
+    "must_include_evidence_ids": ["ev-001-metric-cache-hit-rate", "ev-002-log-redis-failover", "ev-003-metric-db-cpu"],
+    "must_not_claim": ["Product service code change caused the issue", "Database schema change caused the issue"]
+  },
+  "misleading_or_confounding_signals": [
+    "Product service latency spike (symptom, not cause)",
+    "Database CPU spike (downstream effect of cache miss storm)"
+  ],
+  "acceptable_alternatives": [],
+  "required_checks": [
+    {
+      "check_id": "chk-001-redis-status",
+      "description": "Check Redis cluster status and failover timeline",
+      "tool": "get_dependency_status",
+      "expected_outcome": "Redis failover at 16:00:15 UTC, 45s duration",
+      "critical": true
+    },
+    {
+      "check_id": "chk-002-cache-hit-rate",
+      "description": "Correlate cache hit rate drop with Redis failover",
+      "tool": "query_metrics",
+      "expected_outcome": "Hit rate drops exactly at failover start",
+      "critical": true
+    },
+    {
+      "check_id": "chk-003-db-load",
+      "description": "Verify database load correlates with cache misses",
+      "tool": "query_metrics",
+      "expected_outcome": "DB CPU spikes 30s after cache hit rate drops",
+      "critical": true
+    }
+  ],
+  "remediation_guidance": {
+    "suggestion": "Add Redis circuit breaker with stale cache fallback; increase TTL; add connection retry with backoff",
+    "risk_level": "medium",
+    "test_plan": [
+      "Simulate Redis failover in staging",
+      "Verify stale cache served during failover",
+      "Load test with Redis unavailable"
+    ],
+    "rollback_plan": "Configuration change only; revert config if issues"
+  },
+  "tags": ["redis", "cache-miss-storm", "failover", "circuit-breaker", "product-service"]
+}

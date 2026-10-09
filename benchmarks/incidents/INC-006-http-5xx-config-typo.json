@@ -1,0 +1,198 @@
+{
+  "schema_version": "1.0.0",
+  "case_id": "INC-006",
+  "title": "Sudden HTTP 5xx Burst After Config Change in API Gateway",
+  "category": "http_5xx_burst",
+  "scenario_type": "single_cause",
+  "difficulty": "easy",
+  "description": "A configuration change in the API Gateway updated the rate limit threshold from 10000 req/min to 100 req/min (missing a zero). All services behind the gateway immediately started returning 429/503 errors.",
+  "environment": {
+    "name": "production",
+    "region": "us-east-1",
+    "cluster": "prod-cluster-1"
+  },
+  "incident_window": {
+    "start": "2024-01-20T08:00:00Z",
+    "end": "2024-01-20T08:20:00Z",
+    "investigation_cutoff": "2024-01-20T08:05:00Z"
+  },
+  "initial_symptoms": [
+    "All services returning 429/503 errors",
+    "Error rate: 0% → 95% in 30 seconds",
+    "API Gateway logs show rate limit exceeded"
+  ],
+  "affected_services": [
+    {
+      "service_id": "svc-008-gateway",
+      "service_name": "api-gateway",
+      "impact": "primary"
+    },
+    {
+      "service_id": "svc-001-payment",
+      "service_name": "payment-service",
+      "impact": "downstream"
+    },
+    {
+      "service_id": "svc-002-checkout",
+      "service_name": "checkout-service",
+      "impact": "downstream"
+    },
+    {
+      "service_id": "svc-003-order",
+      "service_name": "order-service",
+      "impact": "downstream"
+    }
+  ],
+  "evidence_catalog": [
+    {
+      "evidence_id": "ev-001-metric-5xx-rate",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:http_5xx_rate{service=api-gateway}[1m]",
+      "event_time": "2024-01-20T08:00:00Z",
+      "collection_time": "2024-01-20T08:05:00Z",
+      "time_window_start": "2024-01-20T08:00:00Z",
+      "time_window_end": "2024-01-20T08:05:00Z",
+      "service_id": "svc-008-gateway",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "API Gateway 5xx rate spiked from 0% to 95% at 08:00 UTC",
+      "query_reference": "SELECT sum(http_5xx) / sum(http_requests) FROM gateway_metrics",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate gateway 5xx metrics"
+    },
+    {
+      "evidence_id": "ev-002-log-rate-limit",
+      "evidence_type": "log",
+      "source": "telemetry_storage",
+      "source_reference": "gateway-logs",
+      "event_time": "2024-01-20T08:00:10Z",
+      "collection_time": "2024-01-20T08:05:00Z",
+      "service_id": "svc-008-gateway",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Gateway logs show 'Rate limit exceeded: 100 req/min' for all incoming requests",
+      "query_reference": "SELECT * FROM gateway_logs WHERE message LIKE '%Rate limit exceeded%'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate rate limit logs"
+    },
+    {
+      "evidence_id": "ev-003-config-change",
+      "evidence_type": "configuration",
+      "source": "application_state",
+      "source_reference": "config:api-gateway.rate_limit=100",
+      "event_time": "2024-01-20T07:59:00Z",
+      "collection_time": "2024-01-20T08:05:00Z",
+      "service_id": "svc-008-gateway",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "API Gateway rate limit config changed from 10000 to 100 req/min at 07:59 UTC",
+      "query_reference": "GET /api/v1/config/api-gateway/history",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create config change audit log"
+    },
+    {
+      "evidence_id": "ev-004-commit-config",
+      "evidence_type": "commit",
+      "source": "git_provider",
+      "source_reference": "commit=stu901vwx234",
+      "event_time": "2024-01-19T15:00:00Z",
+      "collection_time": "2024-01-20T08:05:00Z",
+      "service_id": "svc-008-gateway",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Commit changed rate_limit from 10000 to 100 (typo: missing zero)",
+      "query_reference": "GET /api/v1/repos/api-gateway/commits/stu901vwx234",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create commit with config diff"
+    }
+  ],
+  "changes": [
+    {
+      "change_id": "chg-001-config-rate-limit",
+      "change_type": "config_change",
+      "timestamp": "2024-01-20T07:59:00Z",
+      "service_id": "svc-008-gateway",
+      "summary": "Rate limit changed from 10000 to 100 req/min via config push",
+      "details": { "previous_value": 10000, "new_value": 100 }
+    }
+  ],
+  "ground_truth": {
+    "root_cause_type": "config_error",
+    "primary_service_id": "svc-008-gateway",
+    "trigger_change_id": "chg-001-config-rate-limit",
+    "causal_chain": [
+      {
+        "from_type": "trigger",
+        "from_description": "Config change set rate limit to 100 req/min (typo)",
+        "to_type": "mechanism",
+        "to_description": "Gateway rejects all requests exceeding 100 req/min",
+        "evidence_ids": ["ev-003-config-change", "ev-004-commit-config"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "mechanism",
+        "from_description": "Normal traffic (~5000 req/min) exceeds new limit",
+        "to_type": "symptom",
+        "to_description": "95% of requests rejected with 429/503",
+        "evidence_ids": ["ev-001-metric-5xx-rate", "ev-002-log-rate-limit"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "symptom",
+        "from_description": "All downstream services receive 429/503 from gateway",
+        "to_type": "impact",
+        "to_description": "Complete API outage for 20 minutes",
+        "evidence_ids": ["ev-001-metric-5xx-rate"],
+        "confidence": 1.0
+      }
+    ],
+    "ambiguity_note": "",
+    "insufficient_evidence_note": "",
+    "contributing_factors": ["No validation on config values", "No canary for config changes", "Missing rate limit monitoring/alerting"]
+  },
+  "expected_diagnosis": {
+    "root_cause_type_match": true,
+    "service_localization_match": true,
+    "change_attribution_match": true,
+    "min_confidence": 0.95,
+    "must_include_evidence_ids": ["ev-001-metric-5xx-rate", "ev-002-log-rate-limit", "ev-003-config-change"],
+    "must_not_claim": ["Database outage caused 5xx", "Service code deployments caused 5xx"]
+  },
+  "misleading_or_confounding_signals": [
+    "All services show errors simultaneously (gateway is the common choke point)",
+    "Recent deployments to multiple services (coincidental, not causal)"
+  ],
+  "acceptable_alternatives": [],
+  "required_checks": [
+    {
+      "check_id": "chk-001-gateway-logs",
+      "description": "Check gateway logs for rate limit errors",
+      "tool": "query_logs",
+      "expected_outcome": "Logs show 'Rate limit exceeded: 100 req/min'",
+      "critical": true
+    },
+    {
+      "check_id": "chk-002-config-history",
+      "description": "Check config change history for rate limit",
+      "tool": "get_config",
+      "expected_outcome": "Config changed 07:59 UTC from 10000 to 100",
+      "critical": true
+    }
+  ],
+  "remediation_guidance": {
+    "suggestion": "Revert rate limit to 10000; add validation to prevent similar typos; add canary for config changes",
+    "risk_level": "low",
+    "test_plan": [
+      "Revert config in staging",
+      "Load test at 5000 req/min",
+      "Add config validation rule: rate_limit >= 1000"
+    ],
+    "rollback_plan": "Revert config change immediately"
+  },
+  "tags": ["config-error", "rate-limit", "api-gateway", "typo", "cascading"]
+}

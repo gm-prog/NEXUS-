@@ -1,0 +1,211 @@
+{
+  "schema_version": "1.0.0",
+  "case_id": "INC-020",
+  "title": "Resource Exhaustion: File Descriptor Limit Reached in API Gateway",
+  "category": "resource_exhaustion",
+  "scenario_type": "single_cause",
+  "difficulty": "medium",
+  "description": "API Gateway hit the OS file descriptor limit (ulimit -n 65536) due to a connection leak in the HTTP client pool. Connections to upstream services not closed on error paths. Gateway starts rejecting connections with 'too many open files'.",
+  "environment": {
+    "name": "production",
+    "region": "us-east-1",
+    "cluster": "prod-cluster-1"
+  },
+  "incident_window": {
+    "start": "2024-02-03T12:00:00Z",
+    "end": "2024-02-03T12:45:00Z",
+    "investigation_cutoff": "2024-02-03T12:15:00Z"
+  },
+  "initial_symptoms": [
+    "API Gateway returning '500: too many open files'",
+    "New connections rejected",
+    "Gateway process file descriptor count at 65536 (limit)",
+    "Upstream service calls failing"
+  ],
+  "affected_services": [
+    {
+      "service_id": "svc-008-gateway",
+      "service_name": "api-gateway",
+      "impact": "primary"
+    }
+  ],
+  "evidence_catalog": [
+    {
+      "evidence_id": "ev-001-metric-fd-count",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:process_open_fds{service=api-gateway}[15m]",
+      "event_time": "2024-02-03T12:00:00Z",
+      "collection_time": "2024-02-03T12:15:00Z",
+      "time_window_start": "2024-02-03T12:00:00Z",
+      "time_window_end": "2024-02-03T12:15:00Z",
+      "service_id": "svc-008-gateway",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "API Gateway open file descriptors grew from 10k to 65536 (limit) over 30 minutes",
+      "query_reference": "SELECT open_fds FROM process_metrics WHERE service='api-gateway'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate process FD metrics"
+    },
+    {
+      "evidence_id": "ev-002-log-too-many-files",
+      "evidence_type": "log",
+      "source": "telemetry_storage",
+      "source_reference": "api-gateway-logs",
+      "event_time": "2024-02-03T12:05:00Z",
+      "collection_time": "2024-02-03T12:15:00Z",
+      "service_id": "svc-008-gateway",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Gateway logs: 'accept4: too many open files' and 'dial tcp: too many open files'",
+      "query_reference": "SELECT * FROM logs WHERE service='api-gateway' AND message LIKE '%too many open files%'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate 'too many open files' logs"
+    },
+    {
+      "evidence_id": "ev-003-deployment-gateway-v120",
+      "evidence_type": "deployment",
+      "source": "ci_system",
+      "source_reference": "deployment-id=deploy-802",
+      "event_time": "2024-02-03T11:30:00Z",
+      "collection_time": "2024-02-03T12:15:00Z",
+      "service_id": "svc-008-gateway",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Gateway v1.2.0 deployed at 11:30 with new HTTP client pool config",
+      "query_reference": "GET /api/v1/deployments/deploy-802",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create gateway deployment"
+    },
+    {
+      "evidence_id": "ev-004-commit-http-client",
+      "evidence_type": "commit",
+      "source": "git_provider",
+      "source_reference": "commit=vwx999yza000",
+      "event_time": "2024-02-02T10:00:00Z",
+      "collection_time": "2024-02-03T12:15:00Z",
+      "service_id": "svc-008-gateway",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Commit changed HTTP client: increased pool size but removed connection close on error",
+      "query_reference": "GET /api/v1/repos/api-gateway/commits/vwx999yza000",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create commit with HTTP client changes"
+    },
+    {
+      "evidence_id": "ev-005-metric-upstream-errors",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:http_client_errors{service=api-gateway}[15m]",
+      "event_time": "2024-02-03T12:00:00Z",
+      "collection_time": "2024-02-03T12:15:00Z",
+      "time_window_start": "2024-02-03T12:00:00Z",
+      "time_window_end": "2024-02-03T12:15:00Z",
+      "service_id": "svc-008-gateway",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Upstream HTTP client errors increased 10x at 12:00 (connection failures leak FDs)",
+      "query_reference": "SELECT client_errors FROM http_client_metrics WHERE service='api-gateway'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate upstream error metrics"
+    }
+  ],
+  "changes": [
+    {
+      "change_id": "chg-001-deploy-gateway-v120",
+      "change_type": "deployment",
+      "timestamp": "2024-02-03T11:30:00Z",
+      "service_id": "svc-008-gateway",
+      "summary": "API Gateway v1.2.0 deployed with HTTP client connection leak",
+      "commit_sha": "vwx999yza000",
+      "deployed_by": "ci-bot"
+    }
+  ],
+  "ground_truth": {
+    "root_cause_type": "resource_exhaustion",
+    "primary_service_id": "svc-008-gateway",
+    "trigger_change_id": "chg-001-deploy-gateway-v120",
+    "causal_chain": [
+      {
+        "from_type": "trigger",
+        "from_description": "Deployment v1.2.0 removed connection close on HTTP client error path",
+        "to_type": "mechanism",
+        "to_description": "Failed upstream connections leak file descriptors; FD count grows to OS limit",
+        "evidence_ids": ["ev-003-deployment-gateway-v120", "ev-004-commit-http-client"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "mechanism",
+        "from_description": "FD count reaches 65536 (ulimit -n), new connections fail",
+        "to_type": "symptom",
+        "to_description": "'too many open files' errors; gateway cannot accept new connections",
+        "evidence_ids": ["ev-001-metric-fd-count", "ev-002-log-too-many-files", "ev-005-metric-upstream-errors"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "symptom",
+        "from_description": "Gateway rejects all new requests",
+        "to_type": "impact",
+        "to_description": "Complete API outage for all downstream services",
+        "evidence_ids": ["ev-001-metric-fd-count", "ev-002-log-too-many-files"],
+        "confidence": 1.0
+      }
+    ],
+    "ambiguity_note": "",
+    "insufficient_evidence_note": "",
+    "contributing_factors": ["No FD usage monitoring/alerting", "HTTP client pool max size > FD limit", "Error path not tested for resource cleanup", "Default ulimit too low for high-traffic gateway"]
+  },
+  "expected_diagnosis": {
+    "root_cause_type_match": true,
+    "service_localization_match": true,
+    "change_attribution_match": true,
+    "min_confidence": 0.95,
+    "must_include_evidence_ids": ["ev-001-metric-fd-count", "ev-002-log-too-many-files", "ev-004-commit-http-client"],
+    "must_not_claim": ["Upstream service outage caused FD leak", "Kernel bug caused FD exhaustion"]
+  },
+  "misleading_or_confounding_signals": [
+    "Upstream service errors increased (but they're the trigger for the leak, not the root cause)",
+    "Gateway CPU normal (FD exhaustion doesn't show in CPU)"
+  ],
+  "acceptable_alternatives": [],
+  "required_checks": [
+    {
+      "check_id": "chk-001-fd-count",
+      "description": "Check process open file descriptor count",
+      "tool": "query_metrics",
+      "expected_outcome": "FD count at 65536 (limit)",
+      "critical": true
+    },
+    {
+      "check_id": "chk-002-http-client-code",
+      "description": "Review HTTP client error handling for connection close",
+      "tool": "get_commit",
+      "expected_outcome": "Error path missing connection.close()",
+      "critical": true
+    },
+    {
+      "check_id": "chk-003-ulimit",
+      "description": "Check process ulimit -n",
+      "tool": "get_process_info",
+      "expected_outcome": "ulimit -n = 65536",
+      "critical": true
+    }
+  ],
+  "remediation_guidance": {
+    "suggestion": "Fix HTTP client to close connections on error; increase ulimit; add FD usage alerting",
+    "risk_level": "low",
+    "test_plan": [
+      "Fix connection cleanup in error path",
+      "Load test with upstream failures",
+      "Increase ulimit to 1000000",
+      "Add FD usage alert at 80% limit"
+    ],
+    "rollback_plan": "Rollback to gateway v1.1.5; increase ulimit immediately"
+  },
+  "tags": ["resource-exhaustion", "file-descriptors", "connection-leak", "api-gateway", "ulimit"]
+}

@@ -1,0 +1,245 @@
+{
+  "schema_version": "1.0.0",
+  "case_id": "INC-015",
+  "title": "Two Services Show Symptoms: Cannot Establish Which Failed First",
+  "category": "cascading_failure",
+  "scenario_type": "ambiguous",
+  "difficulty": "hard",
+  "description": "Both payment-service and order-service show error rate spikes at nearly the same time (within 30 seconds). Payment-service calls order-service, but order-service also calls payment-service for refunds. Circular dependency makes it impossible to determine which service failed first from available timestamps.",
+  "environment": {
+    "name": "production",
+    "region": "us-east-1",
+    "cluster": "prod-cluster-1"
+  },
+  "incident_window": {
+    "start": "2024-01-29T11:00:00Z",
+    "end": "2024-01-29T11:45:00Z",
+    "investigation_cutoff": "2024-01-29T11:10:00Z"
+  },
+  "initial_symptoms": [
+    "Payment-service error rate: 0% → 40% at 11:00:15 UTC",
+    "Order-service error rate: 0% → 35% at 11:00:30 UTC",
+    "Both services calling each other failing",
+    "Circular dependency prevents clear root cause identification"
+  ],
+  "affected_services": [
+    {
+      "service_id": "svc-001-payment",
+      "service_name": "payment-service",
+      "impact": "primary"
+    },
+    {
+      "service_id": "svc-003-order",
+      "service_name": "order-service",
+      "impact": "primary"
+    }
+  ],
+  "evidence_catalog": [
+    {
+      "evidence_id": "ev-001-metric-payment-errors",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:error_rate{service=payment-service}[1m]",
+      "event_time": "2024-01-29T11:00:15Z",
+      "collection_time": "2024-01-29T11:10:00Z",
+      "time_window_start": "2024-01-29T11:00:15Z",
+      "time_window_end": "2024-01-29T11:01:15Z",
+      "service_id": "svc-001-payment",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Payment-service error rate spike at 11:00:15 UTC",
+      "query_reference": "SELECT error_rate FROM service_metrics WHERE service='payment-service'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate payment service error metrics"
+    },
+    {
+      "evidence_id": "ev-002-metric-order-errors",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:error_rate{service=order-service}[1m]",
+      "event_time": "2024-01-29T11:00:30Z",
+      "collection_time": "2024-01-29T11:10:00Z",
+      "time_window_start": "2024-01-29T11:00:30Z",
+      "time_window_end": "2024-01-29T11:01:30Z",
+      "service_id": "svc-003-order",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Order-service error rate spike at 11:00:30 UTC (15 seconds after payment)",
+      "query_reference": "SELECT error_rate FROM service_metrics WHERE service='order-service'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate order service error metrics"
+    },
+    {
+      "evidence_id": "ev-003-trace-payment-calls-order",
+      "evidence_type": "trace",
+      "source": "telemetry_storage",
+      "source_reference": "trace_id=payment-order-001",
+      "event_time": "2024-01-29T11:00:20Z",
+      "collection_time": "2024-01-29T11:10:00Z",
+      "time_window_start": "2024-01-29T11:00:20Z",
+      "time_window_end": "2024-01-29T11:00:30Z",
+      "service_id": "svc-001-payment",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Trace shows payment-service calling order-service, order-service returning 500",
+      "query_reference": "GET /api/v1/traces/payment-order-001",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate trace showing payment→order failure"
+    },
+    {
+      "evidence_id": "ev-004-trace-order-calls-payment",
+      "evidence_type": "trace",
+      "source": "telemetry_storage",
+      "source_reference": "trace_id=order-payment-001",
+      "event_time": "2024-01-29T11:00:25Z",
+      "collection_time": "2024-01-29T11:10:00Z",
+      "time_window_start": "2024-01-29T11:00:25Z",
+      "time_window_end": "2024-01-29T11:00:35Z",
+      "service_id": "svc-003-order",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Trace shows order-service calling payment-service (refund), payment-service returning 500",
+      "query_reference": "GET /api/v1/traces/order-payment-001",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate trace showing order→payment failure"
+    },
+    {
+      "evidence_id": "ev-005-deployment-payment",
+      "evidence_type": "deployment",
+      "source": "ci_system",
+      "source_reference": "deployment-id=deploy-798",
+      "event_time": "2024-01-29T10:30:00Z",
+      "collection_time": "2024-01-29T11:10:00Z",
+      "service_id": "svc-001-payment",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Payment-service deployed v2.4.0 at 10:30 UTC (30 min before incident)",
+      "query_reference": "GET /api/v1/deployments/deploy-798",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create payment deployment"
+    },
+    {
+      "evidence_id": "ev-006-deployment-order",
+      "evidence_type": "deployment",
+      "source": "ci_system",
+      "source_reference": "deployment-id=deploy-799",
+      "event_time": "2024-01-29T10:35:00Z",
+      "collection_time": "2024-01-29T11:10:00Z",
+      "service_id": "svc-003-order",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Order-service deployed v1.6.0 at 10:35 UTC (25 min before incident)",
+      "query_reference": "GET /api/v1/deployments/deploy-799",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create order deployment"
+    },
+    {
+      "evidence_id": "ev-007-log-payment-db",
+      "evidence_type": "log",
+      "source": "telemetry_storage",
+      "source_reference": "payment-db-logs",
+      "event_time": "2024-01-29T11:00:10Z",
+      "collection_time": "2024-01-29T11:10:00Z",
+      "service_id": "svc-001-payment",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Payment-service DB logs show connection pool exhaustion at 11:00:10",
+      "query_reference": "SELECT * FROM db_logs WHERE service='payment-service' AND message LIKE '%pool exhausted%'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate DB pool exhaustion logs"
+    }
+  ],
+  "changes": [
+    {
+      "change_id": "chg-001-deploy-payment-v240",
+      "change_type": "deployment",
+      "timestamp": "2024-01-29T10:30:00Z",
+      "service_id": "svc-001-payment",
+      "summary": "Payment-service v2.4.0 deployed",
+      "commit_sha": "payment-commit-1",
+      "deployed_by": "ci-bot"
+    },
+    {
+      "change_id": "chg-002-deploy-order-v160",
+      "change_type": "deployment",
+      "timestamp": "2024-01-29T10:35:00Z",
+      "service_id": "svc-003-order",
+      "summary": "Order-service v1.6.0 deployed",
+      "commit_sha": "order-commit-1",
+      "deployed_by": "ci-bot"
+    }
+  ],
+  "ground_truth": {
+    "root_cause_type": "ambiguous",
+    "primary_service_id": "svc-001-payment",
+    "trigger_change_id": "",
+    "causal_chain": [],
+    "ambiguity_note": "Payment-service errors start 15s before order-service, and payment-service shows DB pool exhaustion (ev-007) which could be the true root cause. However, order-service also has a recent deployment. The circular dependency means once one fails, the other fails rapidly. The 15-second difference is within clock skew / metric collection intervals. Cannot definitively determine which service's failure initiated the cascade. The DB pool exhaustion in payment-service is a strong candidate for true root cause, but order-service deployment could have introduced a regression that triggered the cascade.",
+    "insufficient_evidence_note": "",
+    "contributing_factors": ["Circular dependency between payment and order", "Both services deployed within 5 minutes of each other", "Clock skew / metric granularity prevents precise ordering", "No circuit breaker between services"]
+  },
+  "expected_diagnosis": {
+    "root_cause_type_match": false,
+    "service_localization_match": false,
+    "change_attribution_match": false,
+    "min_confidence": 0.4,
+    "must_include_evidence_ids": ["ev-001-metric-payment-errors", "ev-002-metric-order-errors", "ev-003-trace-payment-calls-order", "ev-004-trace-order-calls-payment", "ev-007-log-payment-db"],
+    "must_not_claim": ["Payment-service deployment definitely caused it", "Order-service deployment definitely caused it", "One service definitively failed first"]
+  },
+  "misleading_or_confounding_signals": [
+    "Payment errors start 15s earlier (but within measurement uncertainty)",
+    "Both services have recent deployments",
+    "Circular dependency creates failure loop"
+  ],
+  "acceptable_alternatives": [
+    {
+      "description": "Payment-service DB pool exhaustion (ev-007) is root cause; order-service fails downstream",
+      "evidence_ids": ["ev-001-metric-payment-errors", "ev-007-log-payment-db"],
+      "confidence_range": [0.5, 0.7]
+    },
+    {
+      "description": "Order-service deployment introduced bug causing cascade",
+      "evidence_ids": ["ev-002-metric-order-errors", "ev-006-deployment-order"],
+      "confidence_range": [0.3, 0.5]
+    },
+    {
+      "description": "Simultaneous independent failures in both services",
+      "evidence_ids": ["ev-005-deployment-payment", "ev-006-deployment-order"],
+      "confidence_range": [0.1, 0.3]
+    }
+  ],
+  "required_checks": [
+    {
+      "check_id": "chk-001-db-pool-evidence",
+      "description": "Verify payment-service DB pool exhaustion timestamp",
+      "tool": "query_logs",
+      "expected_outcome": "Pool exhaustion at 11:00:10 (before both error spikes)",
+      "critical": true
+    },
+    {
+      "check_id": "chk-002-break-circular-dep",
+      "description": "Temporarily disable payment→order or order→payment calls to isolate",
+      "tool": "toggle_feature_flag",
+      "expected_outcome": "Isolating one direction reveals true origin",
+      "critical": true
+    }
+  ],
+  "remediation_guidance": {
+    "suggestion": "Cannot determine single root cause. Immediate: break circular dependency with circuit breakers. Investigate: payment-service DB pool exhaustion (strongest evidence). Long-term: eliminate circular dependency.",
+    "risk_level": "high",
+    "test_plan": [
+      "Add circuit breaker between payment and order",
+      "Investigate payment-service DB connection leak",
+      "Add deployment staggering (not simultaneous)"
+    ],
+    "rollback_plan": "Rollback both services to previous versions; add circuit breakers"
+  },
+  "tags": ["ambiguous", "cascading-failure", "circular-dependency", "payment-service", "order-service", "timestamp-uncertainty"]
+}

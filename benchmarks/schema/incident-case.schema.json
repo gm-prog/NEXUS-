@@ -1,0 +1,277 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema#",
+  "$id": "https://nexus.local/schemas/incident-case.schema.json",
+  "title": "NEXUS Incident Case",
+  "description": "Specification for a synthetic incident scenario used in benchmark evaluation. Contains both agent-visible evidence catalog and evaluator-only ground truth.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "case_id",
+    "title",
+    "category",
+    "scenario_type",
+    "difficulty",
+    "description",
+    "environment",
+    "incident_window",
+    "initial_symptoms",
+    "affected_services",
+    "evidence_catalog",
+    "changes",
+    "ground_truth",
+    "expected_diagnosis",
+    "misleading_or_confounding_signals",
+    "acceptable_alternatives",
+    "required_checks",
+    "remediation_guidance",
+    "tags"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Schema version in MAJOR.MINOR.PATCH format"
+    },
+    "case_id": {
+      "type": "string",
+      "pattern": "^INC-\\d{3}$",
+      "description": "Stable unique identifier (e.g., INC-001)"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Human-readable scenario title"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "unhandled_exception",
+        "connection_pool_exhaustion",
+        "slow_query",
+        "redis_outage",
+        "downstream_timeout",
+        "http_5xx_burst",
+        "memory_leak",
+        "cpu_saturation",
+        "queue_backlog",
+        "consumer_crash",
+        "faulty_deployment",
+        "config_drift",
+        "feature_flag_regression",
+        "dependency_regression",
+        "auth_failure",
+        "schema_mismatch",
+        "cache_stampede",
+        "db_lock_contention",
+        "resource_exhaustion",
+        "cascading_failure"
+      ],
+      "description": "Primary failure category"
+    },
+    "scenario_type": {
+      "type": "string",
+      "enum": [
+        "single_cause",
+        "multi_factor",
+        "ambiguous",
+        "insufficient_evidence"
+      ],
+      "description": "Nature of the causal structure"
+    },
+    "difficulty": {
+      "type": "string",
+      "enum": ["easy", "medium", "hard", "expert"],
+      "description": "Expected investigation difficulty"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 50,
+      "description": "Detailed scenario description for fixture authors"
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "region"],
+      "properties": {
+        "name": { "type": "string", "enum": ["production", "staging", "development"] },
+        "region": { "type": "string" },
+        "cluster": { "type": "string" }
+      }
+    },
+    "incident_window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end", "investigation_cutoff"],
+      "properties": {
+        "start": { "type": "string", "format": "date-time", "description": "When symptoms first appeared (UTC)" },
+        "end": { "type": "string", "format": "date-time", "description": "When incident was resolved or observation ended (UTC)" },
+        "investigation_cutoff": { "type": "string", "format": "date-time", "description": "Time when investigation begins; evidence after this is not visible to agent (UTC)" }
+      }
+    },
+    "initial_symptoms": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Observable symptoms that triggered the incident"
+    },
+    "affected_services": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["service_id", "service_name", "impact"],
+        "properties": {
+          "service_id": { "type": "string", "format": "uuid" },
+          "service_name": { "type": "string" },
+          "impact": { "type": "string", "enum": ["primary", "secondary", "downstream", "upstream"] }
+        }
+      }
+    },
+    "evidence_catalog": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["evidence_id", "evidence_type", "source", "source_reference", "event_time", "collection_time", "service_id", "environment_id", "summary", "data_provenance", "integrity_status", "availability_status"],
+        "properties": {
+          "evidence_id": { "type": "string", "pattern": "^ev-[a-z0-9-]+$" },
+          "evidence_type": { "type": "string", "enum": ["metric", "log", "trace", "deployment", "commit", "runbook", "historical_incident", "configuration", "dependency_status", "baseline", "verification_result"] },
+          "source": { "type": "string", "enum": ["telemetry_storage", "application_state", "git_provider", "ci_system", "runbook_store", "manual"] },
+          "source_reference": { "type": "string", "description": "Query ID, trace ID, commit SHA, URL, runbook ID, etc." },
+          "event_time": { "type": "string", "format": "date-time", "description": "When the observation occurred (UTC)" },
+          "collection_time": { "type": "string", "format": "date-time", "description": "When evidence was retrieved/recorded (UTC)" },
+          "time_window_start": { "type": "string", "format": "date-time" },
+          "time_window_end": { "type": "string", "format": "date-time" },
+          "service_id": { "type": "string", "format": "uuid" },
+          "environment_id": { "type": "string", "format": "uuid" },
+          "summary": { "type": "string", "description": "Human-readable summary of the evidence" },
+          "query_reference": { "type": "string", "description": "How to reproduce retrieval (SQL, API call, etc.)" },
+          "data_provenance": { "type": "string", "enum": ["direct_observation", "derived_calculation", "model_inference", "manual_entry", "verification_result"] },
+          "integrity_status": { "type": "string", "enum": ["verified", "unverified", "corrupted", "partial"] },
+          "availability_status": { "type": "string", "enum": ["available", "partial", "missing", "access_denied"] },
+          "raw_data_ref": { "type": "string", "description": "Pointer to raw payload in blob storage" },
+          "synthetic_fixture_note": { "type": "string", "description": "For Phase 0: describes what fixture data Phase 1/2 will need to generate" }
+        }
+      },
+      "description": "Agent-visible evidence specifications. No ground truth fields."
+    },
+    "changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["change_id", "change_type", "timestamp", "service_id", "summary"],
+        "properties": {
+          "change_id": { "type": "string", "pattern": "^chg-[a-z0-9-]+$" },
+          "change_type": { "type": "string", "enum": ["deployment", "config_change", "feature_flag", "dependency_update", "infrastructure"] },
+          "timestamp": { "type": "string", "format": "date-time" },
+          "service_id": { "type": "string", "format": "uuid" },
+          "summary": { "type": "string" },
+          "details": { "type": "object" },
+          "commit_sha": { "type": "string" },
+          "deployed_by": { "type": "string" }
+        }
+      },
+      "description": "Deployment/commit context relevant to the incident"
+    },
+    "ground_truth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root_cause_type", "ambiguity_note", "insufficient_evidence_note"],
+      "properties": {
+        "root_cause_type": { "type": "string", "enum": ["code_defect", "config_error", "dependency_failure", "resource_exhaustion", "capacity_limit", "design_flaw", "unknown", "ambiguous", "insufficient_evidence"] },
+        "primary_service_id": { "type": "string", "format": "uuid" },
+        "trigger_change_id": { "type": "string", "pattern": "^(chg-[a-z0-9-]+)?$" },
+        "causal_chain": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["from_type", "from_description", "to_type", "to_description", "evidence_ids", "confidence"],
+            "properties": {
+              "from_type": { "type": "string", "enum": ["trigger", "mechanism", "symptom", "impact"] },
+              "from_description": { "type": "string" },
+              "to_type": { "type": "string", "enum": ["trigger", "mechanism", "symptom", "impact"] },
+              "to_description": { "type": "string" },
+              "evidence_ids": { "type": "array", "items": { "type": "string", "pattern": "^ev-[a-z0-9-]+$" } },
+              "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+            }
+          }
+        },
+        "ambiguity_note": { "type": "string", "description": "If scenario_type is ambiguous, explains the ambiguity" },
+        "insufficient_evidence_note": { "type": "string", "description": "If scenario_type is insufficient_evidence, explains what evidence is missing" },
+        "contributing_factors": { "type": "array", "items": { "type": "string" } }
+      },
+      "description": "Evaluator-only authoritative answer. NEVER passed to the agent."
+    },
+    "expected_diagnosis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root_cause_type_match", "service_localization_match", "change_attribution_match", "min_confidence", "must_include_evidence_ids", "must_not_claim"],
+      "properties": {
+        "root_cause_type_match": { "type": "boolean", "description": "Whether diagnosis must match ground_truth.root_cause_type exactly" },
+        "service_localization_match": { "type": "boolean", "description": "Whether diagnosis must identify the correct primary service" },
+        "change_attribution_match": { "type": "boolean", "description": "Whether diagnosis must attribute to the correct trigger change" },
+        "min_confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0, "description": "Minimum confidence for a non-ambiguous diagnosis" },
+        "must_include_evidence_ids": { "type": "array", "items": { "type": "string", "pattern": "^ev-[a-z0-9-]+$" }, "description": "Evidence IDs that must be referenced in a valid diagnosis" },
+        "must_not_claim": { "type": "array", "items": { "type": "string" }, "description": "Claims that would indicate hallucination or overconfidence" }
+      }
+    },
+    "misleading_or_confounding_signals": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Signals that appear relevant but are red herrings or coincidental"
+    },
+    "acceptable_alternatives": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["description", "evidence_ids", "confidence_range"],
+        "properties": {
+          "description": { "type": "string" },
+          "evidence_ids": { "type": "array", "items": { "type": "string", "pattern": "^ev-[a-z0-9-]+$" } },
+          "confidence_range": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "number", "minimum": 0.0, "maximum": 1.0 } }
+        }
+      },
+      "description": "Alternative valid diagnoses with their supporting evidence"
+    },
+    "required_checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["check_id", "description", "tool", "expected_outcome"],
+        "properties": {
+          "check_id": { "type": "string", "pattern": "^chk-[a-z0-9-]+$" },
+          "description": { "type": "string" },
+          "tool": { "type": "string" },
+          "expected_outcome": { "type": "string" },
+          "critical": { "type": "boolean", "default": false }
+        }
+      },
+      "description": "Verification actions expected of a thorough investigation"
+    },
+    "remediation_guidance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["suggestion", "risk_level", "test_plan"],
+      "properties": {
+        "suggestion": { "type": "string", "description": "Remediation suggestion only — not an instruction to execute" },
+        "risk_level": { "type": "string", "enum": ["low", "medium", "high"] },
+        "test_plan": { "type": "array", "items": { "type": "string" } },
+        "rollback_plan": { "type": "string" }
+      }
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "description": "Tags for filtering and categorization"
+    }
+  }
+}

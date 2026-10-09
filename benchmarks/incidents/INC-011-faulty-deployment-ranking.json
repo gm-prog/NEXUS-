@@ -1,0 +1,203 @@
+{
+  "schema_version": "1.0.0",
+  "case_id": "INC-011",
+  "title": "Faulty Deployment Causes Regression in Search Service Ranking",
+  "category": "faulty_deployment",
+  "scenario_type": "single_cause",
+  "difficulty": "medium",
+  "description": "A deployment to search-service introduced a bug in the ranking algorithm where a new 'personalization' factor was multiplied instead of added, causing all search results to score near zero. Search relevance dropped dramatically.",
+  "environment": {
+    "name": "production",
+    "region": "us-east-1",
+    "cluster": "prod-cluster-1"
+  },
+  "incident_window": {
+    "start": "2024-01-25T09:00:00Z",
+    "end": "2024-01-25T09:45:00Z",
+    "investigation_cutoff": "2024-01-25T09:15:00Z"
+  },
+  "initial_symptoms": [
+    "Search results showing irrelevant items first",
+    "Click-through rate on search results dropped 80%",
+    "Users reporting 'search is broken'",
+    "No errors in logs - functional regression"
+  ],
+  "affected_services": [
+    {
+      "service_id": "svc-013-search",
+      "service_name": "search-service",
+      "impact": "primary"
+    }
+  ],
+  "evidence_catalog": [
+    {
+      "evidence_id": "ev-001-metric-ctr-drop",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:search_ctr{service=search-service}[15m]",
+      "event_time": "2024-01-25T09:00:00Z",
+      "collection_time": "2024-01-25T09:15:00Z",
+      "time_window_start": "2024-01-25T09:00:00Z",
+      "time_window_end": "2024-01-25T09:15:00Z",
+      "service_id": "svc-013-search",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Search click-through rate dropped from 15% to 3% at 09:00 UTC",
+      "query_reference": "SELECT sum(search_clicks) / sum(search_impressions) FROM search_metrics WHERE service='search-service'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate search CTR metrics"
+    },
+    {
+      "evidence_id": "ev-002-deployment-search-v400",
+      "evidence_type": "deployment",
+      "source": "ci_system",
+      "source_reference": "deployment-id=deploy-796",
+      "event_time": "2024-01-25T08:55:00Z",
+      "collection_time": "2024-01-25T09:15:00Z",
+      "service_id": "svc-013-search",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Deployment deploy-796 rolled out search-service v4.0.0 with new personalization ranking",
+      "query_reference": "GET /api/v1/deployments/deploy-796",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create deployment record"
+    },
+    {
+      "evidence_id": "ev-003-commit-ranking-bug",
+      "evidence_type": "commit",
+      "source": "git_provider",
+      "source_reference": "commit=abc111def222",
+      "event_time": "2024-01-24T16:00:00Z",
+      "collection_time": "2024-01-25T09:15:00Z",
+      "service_id": "svc-013-search",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Commit changed ranking formula: score = base * personalization (should be base + personalization)",
+      "query_reference": "GET /api/v1/repos/search-service/commits/abc111def222",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create commit with ranking formula diff"
+    },
+    {
+      "evidence_id": "ev-004-trace-ranking-score",
+      "evidence_type": "trace",
+      "source": "telemetry_storage",
+      "source_reference": "trace_id=search-trace-001",
+      "event_time": "2024-01-25T09:02:00Z",
+      "collection_time": "2024-01-25T09:15:00Z",
+      "time_window_start": "2024-01-25T09:02:00Z",
+      "time_window_end": "2024-01-25T09:02:10Z",
+      "service_id": "svc-013-search",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Trace shows ranking scores all near 0.001 (base * personalization where personalization ~ 0.01)",
+      "query_reference": "GET /api/v1/traces/search-trace-001",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate trace with ranking scores"
+    },
+    {
+      "evidence_id": "ev-005-historical-ranking",
+      "evidence_type": "historical_incident",
+      "source": "runbook_store",
+      "source_reference": "runbook:search-ranking-debug",
+      "event_time": "2024-01-25T09:00:00Z",
+      "collection_time": "2024-01-25T09:15:00Z",
+      "service_id": "svc-013-search",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Historical runbook: 'Ranking score near zero usually indicates multiplication bug in scoring pipeline'",
+      "query_reference": "GET /api/v1/runbooks/search-ranking-debug",
+      "data_provenance": "manual_entry",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create runbook entry"
+    }
+  ],
+  "changes": [
+    {
+      "change_id": "chg-001-deploy-search-v400",
+      "change_type": "deployment",
+      "timestamp": "2024-01-25T08:55:00Z",
+      "service_id": "svc-013-search",
+      "summary": "Deployed search-service v4.0.0 with ranking multiplication bug",
+      "commit_sha": "abc111def222",
+      "deployed_by": "ci-bot"
+    }
+  ],
+  "ground_truth": {
+    "root_cause_type": "code_defect",
+    "primary_service_id": "svc-013-search",
+    "trigger_change_id": "chg-001-deploy-search-v400",
+    "causal_chain": [
+      {
+        "from_type": "trigger",
+        "from_description": "Deployment v4.0.0 changed ranking formula to multiply instead of add",
+        "to_type": "mechanism",
+        "to_description": "Personalization factor (0.01) multiplies base score, reducing all scores 100x",
+        "evidence_ids": ["ev-002-deployment-search-v400", "ev-003-commit-ranking-bug"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "mechanism",
+        "from_description": "All result scores near zero, ranking effectively random",
+        "to_type": "symptom",
+        "to_description": "Click-through rate drops 80%; irrelevant results shown first",
+        "evidence_ids": ["ev-001-metric-ctr-drop", "ev-004-trace-ranking-score"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "symptom",
+        "from_description": "Users see irrelevant search results",
+        "to_type": "impact",
+        "to_description": "Search-driven revenue impact; user frustration",
+        "evidence_ids": ["ev-001-metric-ctr-drop"],
+        "confidence": 1.0
+      }
+    ],
+    "ambiguity_note": "",
+    "insufficient_evidence_note": "",
+    "contributing_factors": ["No ranking regression test", "Canary deployment not configured for search", "Code review missed operator change"]
+  },
+  "expected_diagnosis": {
+    "root_cause_type_match": true,
+    "service_localization_match": true,
+    "change_attribution_match": true,
+    "min_confidence": 0.9,
+    "must_include_evidence_ids": ["ev-001-metric-ctr-drop", "ev-002-deployment-search-v400", "ev-003-commit-ranking-bug"],
+    "must_not_claim": ["Elasticsearch cluster issue", "Index corruption caused ranking issues"]
+  },
+  "misleading_or_confounding_signals": [
+    "No error logs (functional bug, not crash)",
+    "Elasticsearch metrics normal (not the cause)"
+  ],
+  "acceptable_alternatives": [],
+  "required_checks": [
+    {
+      "check_id": "chk-001-ranking-formula",
+      "description": "Inspect ranking formula in deployed code",
+      "tool": "get_commit",
+      "expected_outcome": "Formula shows multiplication: base * personalization",
+      "critical": true
+    },
+    {
+      "check_id": "chk-002-trace-scores",
+      "description": "Check actual ranking scores in traces",
+      "tool": "get_trace",
+      "expected_outcome": "Scores near 0.001 instead of 0.5-1.0",
+      "critical": true
+    }
+  ],
+  "remediation_guidance": {
+    "suggestion": "Fix ranking formula: change multiplication to addition; add ranking regression test",
+    "risk_level": "low",
+    "test_plan": [
+      "Unit test for ranking formula with known inputs",
+      "A/B test ranking fix in staging",
+      "Canary deploy to 10% traffic"
+    ],
+    "rollback_plan": "Rollback to search-service v3.9.2"
+  },
+  "tags": ["faulty-deployment", "ranking-bug", "search-service", "functional-regression"]
+}

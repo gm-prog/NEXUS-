@@ -1,0 +1,228 @@
+{
+  "schema_version": "1.0.0",
+  "case_id": "INC-002",
+  "title": "Database Connection Pool Exhaustion in Order Service",
+  "category": "connection_pool_exhaustion",
+  "scenario_type": "single_cause",
+  "difficulty": "medium",
+  "description": "Order service exhausts its database connection pool due to a connection leak in a new error handling path. Connections are not returned to pool when a downstream inventory service call fails. Pool saturation causes all database operations to timeout.",
+  "environment": {
+    "name": "production",
+    "region": "us-east-1",
+    "cluster": "prod-cluster-1"
+  },
+  "incident_window": {
+    "start": "2024-01-16T14:30:00Z",
+    "end": "2024-01-16T15:30:00Z",
+    "investigation_cutoff": "2024-01-16T14:45:00Z"
+  },
+  "initial_symptoms": [
+    "Order service database queries timing out",
+    "Connection pool usage at 100% (20/20 connections)",
+    "HTTP 503 from /api/v1/orders endpoint",
+    "Database logs show 'connection pool exhausted'"
+  ],
+  "affected_services": [
+    {
+      "service_id": "svc-003-order",
+      "service_name": "order-service",
+      "impact": "primary"
+    }
+  ],
+  "evidence_catalog": [
+    {
+      "evidence_id": "ev-001-metric-pool-usage",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:db_pool_usage{service=order-service}[5m]",
+      "event_time": "2024-01-16T14:30:00Z",
+      "collection_time": "2024-01-16T14:45:00Z",
+      "time_window_start": "2024-01-16T14:30:00Z",
+      "time_window_end": "2024-01-16T14:45:00Z",
+      "service_id": "svc-003-order",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Database connection pool usage for order-service increased from 40% to 100% over 10 minutes",
+      "query_reference": "SELECT max(db_connection_pool_used) FROM metrics WHERE service='order-service'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate connection pool metrics showing gradual saturation"
+    },
+    {
+      "evidence_id": "ev-002-log-pool-exhausted",
+      "evidence_type": "log",
+      "source": "telemetry_storage",
+      "source_reference": "trace_id=def456-span-789",
+      "event_time": "2024-01-16T14:35:00Z",
+      "collection_time": "2024-01-16T14:45:00Z",
+      "service_id": "svc-003-order",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "HikariCP log: 'Pool exhausted - Timeout waiting for connection after 30000ms'",
+      "query_reference": "SELECT * FROM logs WHERE service='order-service' AND message LIKE '%Pool exhausted%'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate HikariCP pool exhaustion logs"
+    },
+    {
+      "evidence_id": "ev-003-trace-inventory-timeout",
+      "evidence_type": "trace",
+      "source": "telemetry_storage",
+      "source_reference": "trace_id=def456",
+      "event_time": "2024-01-16T14:32:00Z",
+      "collection_time": "2024-01-16T14:45:00Z",
+      "time_window_start": "2024-01-16T14:32:00Z",
+      "time_window_end": "2024-01-16T14:35:00Z",
+      "service_id": "svc-003-order",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Traces show order-service calls inventory-service which times out, then DB connection not released",
+      "query_reference": "GET /api/v1/traces/def456",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate traces showing inventory timeout followed by missing connection close"
+    },
+    {
+      "evidence_id": "ev-004-metric-inventory-latency",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:http_client_duration{service=order-service,downstream=inventory-service}[5m]",
+      "event_time": "2024-01-16T14:30:00Z",
+      "collection_time": "2024-01-16T14:45:00Z",
+      "time_window_start": "2024-01-16T14:30:00Z",
+      "time_window_end": "2024-01-16T14:45:00Z",
+      "service_id": "svc-003-order",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Inventory service call latency p99 increased from 200ms to 30s (timeout) starting at 14:30 UTC",
+      "query_reference": "SELECT quantile(0.99)(http_client_duration_seconds) FROM http_client_requests WHERE downstream='inventory-service'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate HTTP client metrics for inventory-service calls"
+    },
+    {
+      "evidence_id": "ev-005-commit-error-handling",
+      "evidence_type": "commit",
+      "source": "git_provider",
+      "source_reference": "commit=ghi789jkl012",
+      "event_time": "2024-01-15T10:00:00Z",
+      "collection_time": "2024-01-16T14:45:00Z",
+      "service_id": "svc-003-order",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Commit added try-catch for inventory call but forgot to close DB connection in catch block",
+      "query_reference": "GET /api/v1/repos/order-service/commits/ghi789jkl012",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create commit diff showing missing connection.close() in catch block"
+    },
+    {
+      "evidence_id": "ev-006-deployment-order-v142",
+      "evidence_type": "deployment",
+      "source": "ci_system",
+      "source_reference": "deployment-id=deploy-790",
+      "event_time": "2024-01-16T14:00:00Z",
+      "collection_time": "2024-01-16T14:45:00Z",
+      "service_id": "svc-003-order",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Deployment deploy-790 rolled out order-service v1.4.2 at 14:00 UTC (30 min before incident)",
+      "query_reference": "GET /api/v1/deployments/deploy-790",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create deployment record"
+    }
+  ],
+  "changes": [
+    {
+      "change_id": "chg-001-deploy-order-v142",
+      "change_type": "deployment",
+      "timestamp": "2024-01-16T14:00:00Z",
+      "service_id": "svc-003-order",
+      "summary": "Deployed order-service v1.4.2 with new inventory error handling",
+      "commit_sha": "ghi789jkl012",
+      "deployed_by": "ci-bot"
+    }
+  ],
+  "ground_truth": {
+    "root_cause_type": "code_defect",
+    "primary_service_id": "svc-003-order",
+    "trigger_change_id": "chg-001-deploy-order-v142",
+    "causal_chain": [
+      {
+        "from_type": "trigger",
+        "from_description": "Deployment of order-service v1.4.2 with connection leak in error handling",
+        "to_type": "mechanism",
+        "to_description": "Inventory service timeout triggers catch block that fails to return DB connection to pool",
+        "evidence_ids": ["ev-005-commit-error-handling", "ev-006-deployment-order-v142"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "mechanism",
+        "from_description": "Connections leaked on each inventory timeout",
+        "to_type": "symptom",
+        "to_description": "Connection pool gradually saturates to 100%",
+        "evidence_ids": ["ev-001-metric-pool-usage", "ev-004-metric-inventory-latency"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "symptom",
+        "from_description": "Pool exhausted - no connections available",
+        "to_type": "impact",
+        "to_description": "All order-service DB operations timeout, HTTP 503 returned",
+        "evidence_ids": ["ev-002-log-pool-exhausted", "ev-003-trace-inventory-timeout"],
+        "confidence": 1.0
+      }
+    ],
+    "ambiguity_note": "",
+    "insufficient_evidence_note": "",
+    "contributing_factors": ["Inventory service instability", "Missing connection leak detection", "No pool usage alerting until exhaustion"]
+  },
+  "expected_diagnosis": {
+    "root_cause_type_match": true,
+    "service_localization_match": true,
+    "change_attribution_match": true,
+    "min_confidence": 0.85,
+    "must_include_evidence_ids": ["ev-001-metric-pool-usage", "ev-002-log-pool-exhausted", "ev-003-trace-inventory-timeout", "ev-005-commit-error-handling"],
+    "must_not_claim": ["Database server crashed", "Network partition caused pool exhaustion"]
+  },
+  "misleading_or_confounding_signals": [
+    "Database CPU also elevated (symptom of queued queries, not cause)",
+    "Inventory service had its own incident (but order-service leak is the root cause)"
+  ],
+  "acceptable_alternatives": [],
+  "required_checks": [
+    {
+      "check_id": "chk-001-pool-metrics",
+      "description": "Verify pool usage correlates with inventory timeouts",
+      "tool": "query_metrics",
+      "expected_outcome": "Pool usage increases exactly when inventory latency spikes",
+      "critical": true
+    },
+    {
+      "check_id": "chk-002-code-review",
+      "description": "Check commit for missing connection.close() in catch block",
+      "tool": "get_commit",
+      "expected_outcome": "Diff shows try-catch without finally/close",
+      "critical": true
+    },
+    {
+      "check_id": "chk-003-trace-analysis",
+      "description": "Analyze traces for connection leak pattern",
+      "tool": "get_trace",
+      "expected_outcome": "Traces show inventory timeout followed by no connection release",
+      "critical": true
+    }
+  ],
+  "remediation_guidance": {
+    "suggestion": "Add try-with-resources or finally block to ensure connection is returned to pool",
+    "risk_level": "low",
+    "test_plan": [
+      "Add unit test simulating inventory timeout",
+      "Load test with simulated inventory failures",
+      "Monitor pool usage in staging under failure injection"
+    ],
+    "rollback_plan": "Rollback to order-service v1.4.1"
+  },
+  "tags": ["connection-pool", "resource-leak", "order-service", "hikaricp"]
+}

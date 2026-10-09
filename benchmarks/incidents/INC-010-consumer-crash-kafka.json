@@ -1,0 +1,206 @@
+{
+  "schema_version": "1.0.0",
+  "case_id": "INC-010",
+  "title": "Message Consumer Crash in Inventory Service Due to Poison Message",
+  "category": "consumer_crash",
+  "scenario_type": "single_cause",
+  "difficulty": "medium",
+  "description": "Inventory service Kafka consumer crashes on a malformed message (missing required field). Consumer restarts but immediately crashes on same message, creating crash loop. No inventory updates processed for 30 minutes.",
+  "environment": {
+    "name": "production",
+    "region": "us-east-1",
+    "cluster": "prod-cluster-1"
+  },
+  "incident_window": {
+    "start": "2024-01-24T15:00:00Z",
+    "end": "2024-01-24T15:45:00Z",
+    "investigation_cutoff": "2024-01-24T15:10:00Z"
+  },
+  "initial_symptoms": [
+    "Inventory service pods restarting every 30 seconds",
+    "Kafka consumer lag: 100k messages and growing",
+    "Order service unable to reserve inventory",
+    "Consumer logs show NullPointerException on message field"
+  ],
+  "affected_services": [
+    {
+      "service_id": "svc-012-inventory",
+      "service_name": "inventory-service",
+      "impact": "primary"
+    },
+    {
+      "service_id": "svc-003-order",
+      "service_name": "order-service",
+      "impact": "downstream"
+    }
+  ],
+  "evidence_catalog": [
+    {
+      "evidence_id": "ev-001-metric-consumer-lag",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:kafka_consumer_lag{service=inventory-service,topic=stock-updates}[15m]",
+      "event_time": "2024-01-24T15:00:00Z",
+      "collection_time": "2024-01-24T15:10:00Z",
+      "time_window_start": "2024-01-24T15:00:00Z",
+      "time_window_end": "2024-01-24T15:10:00Z",
+      "service_id": "svc-012-inventory",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Kafka consumer lag for inventory-service grew from 0 to 100k messages",
+      "query_reference": "SELECT consumer_lag FROM kafka_metrics WHERE service='inventory-service' AND topic='stock-updates'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate Kafka consumer lag metrics"
+    },
+    {
+      "evidence_id": "ev-002-log-npe-crash",
+      "evidence_type": "log",
+      "source": "telemetry_storage",
+      "source_reference": "inventory-consumer-logs",
+      "event_time": "2024-01-24T15:00:30Z",
+      "collection_time": "2024-01-24T15:10:00Z",
+      "service_id": "svc-012-inventory",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Consumer logs show NullPointerException: 'Cannot read field 'sku' from null message payload'",
+      "query_reference": "SELECT * FROM consumer_logs WHERE service='inventory-service' AND level='ERROR'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate consumer crash logs"
+    },
+    {
+      "evidence_id": "ev-003-deployment-inventory-v150",
+      "evidence_type": "deployment",
+      "source": "ci_system",
+      "source_reference": "deployment-id=deploy-795",
+      "event_time": "2024-01-24T14:30:00Z",
+      "collection_time": "2024-01-24T15:10:00Z",
+      "service_id": "svc-012-inventory",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Deployment deploy-795 rolled out inventory-service v1.5.0 with new message handler",
+      "query_reference": "GET /api/v1/deployments/deploy-795",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create deployment record"
+    },
+    {
+      "evidence_id": "ev-004-commit-message-handler",
+      "evidence_type": "commit",
+      "source": "git_provider",
+      "source_reference": "commit=uvw789xyz012",
+      "event_time": "2024-01-23T11:00:00Z",
+      "collection_time": "2024-01-24T15:10:00Z",
+      "service_id": "svc-012-inventory",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Commit added new message handler assuming 'sku' field always present (not validated)",
+      "query_reference": "GET /api/v1/repos/inventory-service/commits/uvw789xyz012",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create commit with message handler diff"
+    },
+    {
+      "evidence_id": "ev-005-kafka-message",
+      "evidence_type": "verification_result",
+      "source": "telemetry_storage",
+      "source_reference": "kafka-message:stock-updates-partition-3-offset-456789",
+      "event_time": "2024-01-24T14:55:00Z",
+      "collection_time": "2024-01-24T15:10:00Z",
+      "service_id": "svc-012-inventory",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Poison message at offset 456789 has null payload: {topic:'stock-updates', partition:3, offset:456789, value:null}",
+      "query_reference": "kafka-console-consumer --topic stock-updates --partition 3 --offset 456789",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will simulate Kafka message inspection"
+    }
+  ],
+  "changes": [
+    {
+      "change_id": "chg-001-deploy-inventory-v150",
+      "change_type": "deployment",
+      "timestamp": "2024-01-24T14:30:00Z",
+      "service_id": "svc-012-inventory",
+      "summary": "Deployed inventory-service v1.5.0 with unguarded message field access",
+      "commit_sha": "uvw789xyz012",
+      "deployed_by": "ci-bot"
+    }
+  ],
+  "ground_truth": {
+    "root_cause_type": "code_defect",
+    "primary_service_id": "svc-012-inventory",
+    "trigger_change_id": "chg-001-deploy-inventory-v150",
+    "causal_chain": [
+      {
+        "from_type": "trigger",
+        "from_description": "Deployment v1.5.0 introduced unguarded field access in message handler",
+        "to_type": "mechanism",
+        "to_description": "Null payload message causes NPE, consumer crashes, restarts, hits same message",
+        "evidence_ids": ["ev-003-deployment-inventory-v150", "ev-004-commit-message-handler", "ev-005-kafka-message"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "mechanism",
+        "from_description": "Crash loop prevents any message processing",
+        "to_type": "symptom",
+        "to_description": "Consumer lag grows 100k; no inventory updates processed",
+        "evidence_ids": ["ev-001-metric-consumer-lag", "ev-002-log-npe-crash"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "symptom",
+        "from_description": "Order service inventory reservation fails",
+        "to_type": "impact",
+        "to_description": "Orders cannot be placed; inventory stale",
+        "evidence_ids": ["ev-001-metric-consumer-lag"],
+        "confidence": 1.0
+      }
+    ],
+    "ambiguity_note": "",
+    "insufficient_evidence_note": "",
+    "contributing_factors": ["No message schema validation", "No dead letter queue for poison messages", "Consumer restart policy too aggressive"]
+  },
+  "expected_diagnosis": {
+    "root_cause_type_match": true,
+    "service_localization_match": true,
+    "change_attribution_match": true,
+    "min_confidence": 0.9,
+    "must_include_evidence_ids": ["ev-001-metric-consumer-lag", "ev-002-log-npe-crash", "ev-004-commit-message-handler", "ev-005-kafka-message"],
+    "must_not_claim": ["Kafka broker outage", "Network partition caused consumer lag"]
+  },
+  "misleading_or_confounding_signals": [
+    "Kafka broker metrics normal (broker not the issue)",
+    "Order service errors (downstream effect)"
+  ],
+  "acceptable_alternatives": [],
+  "required_checks": [
+    {
+      "check_id": "chk-001-kafka-offset",
+      "description": "Inspect message at problematic offset",
+      "tool": "inspect_kafka_message",
+      "expected_outcome": "Message at offset 456789 has null value",
+      "critical": true
+    },
+    {
+      "check_id": "chk-002-consumer-code",
+      "description": "Check consumer code for null checks",
+      "tool": "get_commit",
+      "expected_outcome": "Message handler accesses message.sku without null check",
+      "critical": true
+    }
+  ],
+  "remediation_guidance": {
+    "suggestion": "Add null check for message payload; configure dead letter queue; skip poison message after N retries",
+    "risk_level": "low",
+    "test_plan": [
+      "Add unit test for null payload handling",
+      "Test dead letter queue configuration",
+      "Produce test poison message in staging"
+    ],
+    "rollback_plan": "Rollback to inventory-service v1.4.3; skip poison message offset"
+  },
+  "tags": ["consumer-crash", "kafka", "poison-message", "inventory-service", "null-pointer"]
+}

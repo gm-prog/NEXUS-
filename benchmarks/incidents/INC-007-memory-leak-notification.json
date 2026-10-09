@@ -1,0 +1,226 @@
+{
+  "schema_version": "1.0.0",
+  "case_id": "INC-007",
+  "title": "Memory Leak in Notification Service Causes OOM Kills",
+  "category": "memory_leak",
+  "scenario_type": "single_cause",
+  "difficulty": "medium",
+  "description": "A deployment introduced a memory leak in notification-service where WebSocket connections are not properly closed on client disconnect. Memory grows unbounded until container OOM kill at ~2GB.",
+  "environment": {
+    "name": "production",
+    "region": "us-east-1",
+    "cluster": "prod-cluster-1"
+  },
+  "incident_window": {
+    "start": "2024-01-21T13:00:00Z",
+    "end": "2024-01-21T14:30:00Z",
+    "investigation_cutoff": "2024-01-21T13:30:00Z"
+  },
+  "initial_symptoms": [
+    "Notification service pods restarting every 10-15 minutes",
+    "Memory usage sawtooth pattern: 200MB → 2GB → restart",
+    "WebSocket clients experiencing disconnects",
+    "Kubernetes events: OOMKilled"
+  ],
+  "affected_services": [
+    {
+      "service_id": "svc-009-notification",
+      "service_name": "notification-service",
+      "impact": "primary"
+    }
+  ],
+  "evidence_catalog": [
+    {
+      "evidence_id": "ev-001-metric-memory-sawtooth",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:container_memory{service=notification-service}[1h]",
+      "event_time": "2024-01-21T13:00:00Z",
+      "collection_time": "2024-01-21T13:30:00Z",
+      "time_window_start": "2024-01-21T13:00:00Z",
+      "time_window_end": "2024-01-21T13:30:00Z",
+      "service_id": "svc-009-notification",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Notification service memory shows sawtooth pattern: grows from 200MB to 2GB over 10min, then drops to 200MB (restart)",
+      "query_reference": "SELECT max(container_memory_bytes) FROM container_metrics WHERE service='notification-service'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate container memory metrics with sawtooth pattern"
+    },
+    {
+      "evidence_id": "ev-002-log-oom-killed",
+      "evidence_type": "log",
+      "source": "telemetry_storage",
+      "source_reference": "kubernetes-events",
+      "event_time": "2024-01-21T13:10:00Z",
+      "collection_time": "2024-01-21T13:30:00Z",
+      "service_id": "svc-009-notification",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Kubernetes events show OOMKilled for notification-service pods every 10-15 minutes",
+      "query_reference": "SELECT * FROM k8s_events WHERE reason='OOMKilled' AND involved_object='notification-service'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate K8s OOMKilled events"
+    },
+    {
+      "evidence_id": "ev-003-deployment-notif-v321",
+      "evidence_type": "deployment",
+      "source": "ci_system",
+      "source_reference": "deployment-id=deploy-792",
+      "event_time": "2024-01-21T12:30:00Z",
+      "collection_time": "2024-01-21T13:30:00Z",
+      "service_id": "svc-009-notification",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Deployment deploy-792 rolled out notification-service v3.2.1 with new WebSocket handler",
+      "query_reference": "GET /api/v1/deployments/deploy-792",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create deployment record"
+    },
+    {
+      "evidence_id": "ev-004-commit-websocket",
+      "evidence_type": "commit",
+      "source": "git_provider",
+      "source_reference": "commit=yza567bcd890",
+      "event_time": "2024-01-20T10:00:00Z",
+      "collection_time": "2024-01-21T13:30:00Z",
+      "service_id": "svc-009-notification",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Commit added WebSocket connection tracking but forgot to remove from map on disconnect",
+      "query_reference": "GET /api/v1/repos/notification-service/commits/yza567bcd890",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create commit diff showing missing cleanup"
+    },
+    {
+      "evidence_id": "ev-005-metric-websocket-connections",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:websocket_connections{service=notification-service}[1h]",
+      "event_time": "2024-01-21T13:00:00Z",
+      "collection_time": "2024-01-21T13:30:00Z",
+      "time_window_start": "2024-01-21T13:00:00Z",
+      "time_window_end": "2024-01-21T13:30:00Z",
+      "service_id": "svc-009-notification",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Active WebSocket connections metric shows steady increase (never decreases on disconnect)",
+      "query_reference": "SELECT websocket_active_connections FROM service_metrics WHERE service='notification-service'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate WebSocket connection metrics"
+    },
+    {
+      "evidence_id": "ev-006-heap-dump",
+      "evidence_type": "verification_result",
+      "source": "telemetry_storage",
+      "source_reference": "heap-dump:notification-service-pod-xyz",
+      "event_time": "2024-01-21T13:25:00Z",
+      "collection_time": "2024-01-21T13:30:00Z",
+      "service_id": "svc-009-notification",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Heap dump shows 1.8GB retained in WebSocketConnectionManager.connections map with 50k stale entries",
+      "query_reference": "ANALYZE HEAP DUMP notification-service-pod-xyz",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will simulate heap dump analysis result"
+    }
+  ],
+  "changes": [
+    {
+      "change_id": "chg-001-deploy-notif-v321",
+      "change_type": "deployment",
+      "timestamp": "2024-01-21T12:30:00Z",
+      "service_id": "svc-009-notification",
+      "summary": "Deployed notification-service v3.2.1 with WebSocket connection leak",
+      "commit_sha": "yza567bcd890",
+      "deployed_by": "ci-bot"
+    }
+  ],
+  "ground_truth": {
+    "root_cause_type": "code_defect",
+    "primary_service_id": "svc-009-notification",
+    "trigger_change_id": "chg-001-deploy-notif-v321",
+    "causal_chain": [
+      {
+        "from_type": "trigger",
+        "from_description": "Deployment v3.2.1 introduced WebSocket connection leak",
+        "to_type": "mechanism",
+        "to_description": "WebSocket connections added to map on connect but never removed on disconnect",
+        "evidence_ids": ["ev-003-deployment-notif-v321", "ev-004-commit-websocket"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "mechanism",
+        "from_description": "Stale connections accumulate in memory (50k+ entries)",
+        "to_type": "symptom",
+        "to_description": "Memory grows linearly until OOM kill at 2GB limit",
+        "evidence_ids": ["ev-001-metric-memory-sawtooth", "ev-005-metric-websocket-connections", "ev-006-heap-dump"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "symptom",
+        "from_description": "Pod OOMKilled and restarted",
+        "to_type": "impact",
+        "to_description": "WebSocket clients disconnected; notification delivery interrupted",
+        "evidence_ids": ["ev-002-log-oom-killed"],
+        "confidence": 1.0
+      }
+    ],
+    "ambiguity_note": "",
+    "insufficient_evidence_note": "",
+    "contributing_factors": ["No memory leak detection in CI", "Missing WebSocket lifecycle tests", "No memory profiling in staging"]
+  },
+  "expected_diagnosis": {
+    "root_cause_type_match": true,
+    "service_localization_match": true,
+    "change_attribution_match": true,
+    "min_confidence": 0.9,
+    "must_include_evidence_ids": ["ev-001-metric-memory-sawtooth", "ev-002-log-oom-killed", "ev-004-commit-websocket", "ev-005-metric-websocket-connections"],
+    "must_not_claim": ["Database memory leak", "Garbage collector misconfiguration"]
+  },
+  "misleading_or_confounding_signals": [
+    "GC logs show frequent collections (symptom, not cause)",
+    "Other services on same node unaffected (isolated to this service)"
+  ],
+  "acceptable_alternatives": [],
+  "required_checks": [
+    {
+      "check_id": "chk-001-memory-pattern",
+      "description": "Analyze memory growth pattern for sawtooth",
+      "tool": "query_metrics",
+      "expected_outcome": "Sawtooth pattern with regular restarts",
+      "critical": true
+    },
+    {
+      "check_id": "chk-002-websocket-metric",
+      "description": "Check WebSocket connection count never decreases",
+      "tool": "query_metrics",
+      "expected_outcome": "Connections monotonically increase",
+      "critical": true
+    },
+    {
+      "check_id": "chk-003-code-review",
+      "description": "Review WebSocket handler for cleanup on disconnect",
+      "tool": "get_commit",
+      "expected_outcome": "Missing removal from connections map in onDisconnect",
+      "critical": true
+    }
+  ],
+  "remediation_guidance": {
+    "suggestion": "Add connection cleanup in WebSocket onDisconnect handler; add connection timeout/cleanup job",
+    "risk_level": "low",
+    "test_plan": [
+      "Add unit test for WebSocket disconnect cleanup",
+      "Load test with connect/disconnect cycles",
+      "Monitor memory for 24h in staging"
+    ],
+    "rollback_plan": "Rollback to notification-service v3.2.0"
+  },
+  "tags": ["memory-leak", "websocket", "oom-killed", "kubernetes", "notification-service"]
+}

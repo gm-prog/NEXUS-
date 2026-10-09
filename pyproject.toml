@@ -1,0 +1,69 @@
+[project]
+name = "nexus-benchmarks"
+version = "0.1.0"
+description = "NEXUS Phase 0: Benchmark schemas, validation CLI, and incident scenario fixtures"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "jsonschema>=4.23.0",
+    "referencing>=0.35.0",
+    "rpds-py>=0.19.0",
+    "click>=8.1.0",
+    "pyyaml>=6.0",
+]
+license = {text = "MIT"}
+authors = [
+    {name = "NEXUS Team", email = "team@nexus.local"}
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+keywords = ["benchmark", "incident", "observability", "validation", "json-schema"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.6.0",
+]
+
+[project.scripts]
+nexus-benchmark = "nexus_benchmarks.cli:main"
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+indent-width = 4
+preview = true
+lint.select = ["E", "F", "I", "W", "UP", "B", "C4", "PTH", "T20", "SIM", "RET", "ARG", "ERA", "PD", "PL", "TRY", "NPY", "RSE", "TCH", "INT"]
+lint.ignore = []
+format.quote-style = "double"
+format.skip-magic-trailing-comma = false
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S106", "S311"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --strict-markers --strict-config"
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests",
+    "schema: Schema validation tests",
+    "cli: CLI tests",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["nexus_benchmarks*"]

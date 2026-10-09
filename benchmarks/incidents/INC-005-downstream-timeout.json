@@ -1,0 +1,199 @@
+{
+  "schema_version": "1.0.0",
+  "case_id": "INC-005",
+  "title": "Downstream Payment Gateway Timeout Causes Checkout Failures",
+  "category": "downstream_timeout",
+  "scenario_type": "single_cause",
+  "difficulty": "easy",
+  "description": "Third-party payment gateway (PayCo) experienced degradation with 30s response times. Checkout service has a 10s timeout, causing all payment attempts to fail. No local code change; entirely external dependency failure.",
+  "environment": {
+    "name": "production",
+    "region": "us-east-1",
+    "cluster": "prod-cluster-1"
+  },
+  "incident_window": {
+    "start": "2024-01-19T11:00:00Z",
+    "end": "2024-01-19T11:45:00Z",
+    "investigation_cutoff": "2024-01-19T11:10:00Z"
+  },
+  "initial_symptoms": [
+    "Checkout failures: 'Payment gateway timeout'",
+    "Payment success rate dropped from 99.5% to 12%",
+    "PayCo status page shows degraded performance"
+  ],
+  "affected_services": [
+    {
+      "service_id": "svc-002-checkout",
+      "service_name": "checkout-service",
+      "impact": "primary"
+    }
+  ],
+  "evidence_catalog": [
+    {
+      "evidence_id": "ev-001-metric-payment-success",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:payment_success_rate{service=checkout-service}[5m]",
+      "event_time": "2024-01-19T11:00:00Z",
+      "collection_time": "2024-01-19T11:10:00Z",
+      "time_window_start": "2024-01-19T11:00:00Z",
+      "time_window_end": "2024-01-19T11:10:00Z",
+      "service_id": "svc-002-checkout",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Payment success rate dropped from 99.5% to 12% at 11:00 UTC",
+      "query_reference": "SELECT sum(payment_success) / sum(payment_attempts) FROM payment_metrics WHERE service='checkout-service'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate payment success rate metrics"
+    },
+    {
+      "evidence_id": "ev-002-log-payco-timeout",
+      "evidence_type": "log",
+      "source": "telemetry_storage",
+      "source_reference": "trace_id=jkl012",
+      "event_time": "2024-01-19T11:01:00Z",
+      "collection_time": "2024-01-19T11:10:00Z",
+      "service_id": "svc-002-checkout",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Checkout service logs show 'PayCo API timeout after 10000ms' for all payment attempts",
+      "query_reference": "SELECT * FROM logs WHERE service='checkout-service' AND message LIKE '%PayCo%timeout%'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate timeout logs"
+    },
+    {
+      "evidence_id": "ev-003-trace-payco-call",
+      "evidence_type": "trace",
+      "source": "telemetry_storage",
+      "source_reference": "trace_id=jkl012",
+      "event_time": "2024-01-19T11:01:00Z",
+      "collection_time": "2024-01-19T11:10:00Z",
+      "time_window_start": "2024-01-19T11:01:00Z",
+      "time_window_end": "2024-01-19T11:01:10Z",
+      "service_id": "svc-002-checkout",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Trace shows checkout-service calling PayCo /charge endpoint, span duration 10s (timeout), status=error",
+      "query_reference": "GET /api/v1/traces/jkl012",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate trace with external API timeout"
+    },
+    {
+      "evidence_id": "ev-004-dependency-status-payco",
+      "evidence_type": "dependency_status",
+      "source": "application_state",
+      "source_reference": "dependency:payco-api.status=degraded",
+      "event_time": "2024-01-19T11:00:00Z",
+      "collection_time": "2024-01-19T11:10:00Z",
+      "service_id": "svc-002-checkout",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "PayCo API status shows degraded: p99 latency 30s, error rate 5%",
+      "query_reference": "GET /api/v1/dependencies/payco-api",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create dependency status record from external monitoring"
+    },
+    {
+      "evidence_id": "ev-005-config-timeout",
+      "evidence_type": "configuration",
+      "source": "application_state",
+      "source_reference": "config:checkout-service.payment.timeout=10000",
+      "event_time": "2024-01-19T11:00:00Z",
+      "collection_time": "2024-01-19T11:10:00Z",
+      "service_id": "svc-002-checkout",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Checkout service configured with 10s timeout for PayCo calls",
+      "query_reference": "GET /api/v1/config/checkout-service",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create timeout configuration record"
+    }
+  ],
+  "changes": [],
+  "ground_truth": {
+    "root_cause_type": "dependency_failure",
+    "primary_service_id": "svc-002-checkout",
+    "trigger_change_id": "",
+    "causal_chain": [
+      {
+        "from_type": "trigger",
+        "from_description": "PayCo payment gateway degradation (external)",
+        "to_type": "mechanism",
+        "to_description": "PayCo API p99 latency 30s exceeds checkout-service 10s timeout",
+        "evidence_ids": ["ev-004-dependency-status-payco", "ev-005-config-timeout"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "mechanism",
+        "from_description": "All PayCo calls timeout after 10s",
+        "to_type": "symptom",
+        "to_description": "Payment success rate drops to 12%",
+        "evidence_ids": ["ev-001-metric-payment-success", "ev-002-log-payco-timeout", "ev-003-trace-payco-call"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "symptom",
+        "from_description": "Checkout failures for all users attempting payment",
+        "to_type": "impact",
+        "to_description": "Revenue impact: estimated $X/min during outage",
+        "evidence_ids": ["ev-001-metric-payment-success"],
+        "confidence": 1.0
+      }
+    ],
+    "ambiguity_note": "",
+    "insufficient_evidence_note": "",
+    "contributing_factors": ["Timeout too aggressive for known PayCo variability", "No circuit breaker or fallback payment method", "No alerting on dependency health"]
+  },
+  "expected_diagnosis": {
+    "root_cause_type_match": true,
+    "service_localization_match": true,
+    "change_attribution_match": false,
+    "min_confidence": 0.9,
+    "must_include_evidence_ids": ["ev-001-metric-payment-success", "ev-002-log-payco-timeout", "ev-004-dependency-status-payco"],
+    "must_not_claim": ["Local deployment caused the issue", "Database issue caused payment failures"]
+  },
+  "misleading_or_confounding_signals": [
+    "Checkout service error rate high (symptom, not cause)",
+    "Recent deployment to checkout-service 2 hours prior (unrelated)"
+  ],
+  "acceptable_alternatives": [],
+  "required_checks": [
+    {
+      "check_id": "chk-001-payco-status",
+      "description": "Verify PayCo status page / API health",
+      "tool": "get_dependency_status",
+      "expected_outcome": "PayCo shows degraded with 30s p99 latency",
+      "critical": true
+    },
+    {
+      "check_id": "chk-002-timeout-config",
+      "description": "Check checkout-service timeout configuration",
+      "tool": "get_config",
+      "expected_outcome": "Timeout set to 10s",
+      "critical": true
+    },
+    {
+      "check_id": "chk-003-trace-confirm",
+      "description": "Confirm trace shows external timeout not local error",
+      "tool": "get_trace",
+      "expected_outcome": "Span shows PayCo call duration 10s with timeout error",
+      "critical": true
+    }
+  ],
+  "remediation_guidance": {
+    "suggestion": "Increase PayCo timeout to 35s; add circuit breaker; implement fallback to alternative payment provider",
+    "risk_level": "medium",
+    "test_plan": [
+      "Test increased timeout in staging",
+      "Simulate PayCo latency with chaos engineering",
+      "Verify fallback payment flow works"
+    ],
+    "rollback_plan": "Configuration change only; revert timeout if issues"
+  },
+  "tags": ["downstream-timeout", "third-party", "payco", "checkout-service", "dependency"]
+}

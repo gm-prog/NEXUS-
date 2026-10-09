@@ -1,0 +1,182 @@
+{
+  "schema_version": "1.0.0",
+  "case_id": "INC-014",
+  "title": "Third-Party CDN Outage With No Local Code Change",
+  "category": "dependency_regression",
+  "scenario_type": "insufficient_evidence",
+  "difficulty": "hard",
+  "description": "Static assets (JS, CSS, images) fail to load for all users. The CDN provider (CloudFast) experienced an outage. No local code changes, deployments, or config changes occurred. The evidence available is limited to client-side error reports and CDN status page.",
+  "environment": {
+    "name": "production",
+    "region": "global",
+    "cluster": "prod-cluster-1"
+  },
+  "incident_window": {
+    "start": "2024-01-28T16:00:00Z",
+    "end": "2024-01-28T17:00:00Z",
+    "investigation_cutoff": "2024-01-28T16:15:00Z"
+  },
+  "initial_symptoms": [
+    "Browser console errors: 'Failed to load resource: net::ERR_CONNECTION_TIMED_OUT' for CDN URLs",
+    "Page loads but without styles/scripts",
+    "No backend errors or deployments",
+    "CloudFast status page shows 'Investigating' at 16:05 UTC"
+  ],
+  "affected_services": [
+    {
+      "service_id": "svc-015-frontend",
+      "service_name": "frontend-assets",
+      "impact": "primary"
+    }
+  ],
+  "evidence_catalog": [
+    {
+      "evidence_id": "ev-001-client-errors",
+      "evidence_type": "log",
+      "source": "telemetry_storage",
+      "source_reference": "frontend-error-reports",
+      "event_time": "2024-01-28T16:00:00Z",
+      "collection_time": "2024-01-28T16:15:00Z",
+      "service_id": "svc-015-frontend",
+      "environment_id": "env-prod-global",
+      "summary": "Client-side error reports show CDN resource timeouts for cdn.cloudfast.net/assets/*",
+      "query_reference": "SELECT * FROM client_errors WHERE error LIKE '%cloudfast.net%' AND error LIKE '%timeout%'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate client-side error reports"
+    },
+    {
+      "evidence_id": "ev-002-cdn-status",
+      "evidence_type": "dependency_status",
+      "source": "application_state",
+      "source_reference": "dependency:cloudfast-cdn.status=outage",
+      "event_time": "2024-01-28T16:05:00Z",
+      "collection_time": "2024-01-28T16:15:00Z",
+      "service_id": "svc-015-frontend",
+      "environment_id": "env-prod-global",
+      "summary": "CloudFast CDN status page shows 'Major Outage' starting 16:05 UTC",
+      "query_reference": "GET https://status.cloudfast.net/api/v1/status",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will simulate CDN status API response"
+    },
+    {
+      "evidence_id": "ev-003-no-deployments",
+      "evidence_type": "deployment",
+      "source": "ci_system",
+      "source_reference": "deployment-query:last-24h",
+      "event_time": "2024-01-28T16:00:00Z",
+      "collection_time": "2024-01-28T16:15:00Z",
+      "service_id": "svc-015-frontend",
+      "environment_id": "env-prod-global",
+      "summary": "No deployments to any service in last 24 hours",
+      "query_reference": "GET /api/v1/deployments?since=24h",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create empty deployment list"
+    },
+    {
+      "evidence_id": "ev-004-no-config-changes",
+      "evidence_type": "configuration",
+      "source": "application_state",
+      "source_reference": "config-audit:last-24h",
+      "event_time": "2024-01-28T16:00:00Z",
+      "collection_time": "2024-01-28T16:15:00Z",
+      "service_id": "svc-015-frontend",
+      "environment_id": "env-prod-global",
+      "summary": "No configuration changes in last 24 hours",
+      "query_reference": "GET /api/v1/config-audit?since=24h",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create empty config audit"
+    },
+    {
+      "evidence_id": "ev-005-dns-resolution",
+      "evidence_type": "verification_result",
+      "source": "telemetry_storage",
+      "source_reference": "dns-check:cdn.cloudfast.net",
+      "event_time": "2024-01-28T16:10:00Z",
+      "collection_time": "2024-01-28T16:15:00Z",
+      "service_id": "svc-015-frontend",
+      "environment_id": "env-prod-global",
+      "summary": "DNS resolves but TCP connection to CDN edge servers times out",
+      "query_reference": "dig cdn.cloudfast.net && nc -zv cdn.cloudfast.net 443",
+      "data_provenance": "verification_result",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will simulate DNS/TCP check results"
+    }
+  ],
+  "changes": [],
+  "ground_truth": {
+    "root_cause_type": "insufficient_evidence",
+    "primary_service_id": "svc-015-frontend",
+    "trigger_change_id": "",
+    "causal_chain": [],
+    "ambiguity_note": "",
+    "insufficient_evidence_note": "The available evidence strongly suggests a CDN provider outage (CloudFast), but we cannot definitively prove it from our internal telemetry alone. We have: client errors pointing to CDN, CDN status page showing outage, no local changes. However, we cannot access CloudFast's internal systems to confirm root cause. The investigation can only conclude 'external CDN outage' with high confidence but not 100% certainty. A proper diagnosis would state: 'Evidence strongly indicates CloudFast CDN outage (confidence 0.9); no local cause identified; external confirmation needed.'",
+    "contributing_factors": ["Single CDN provider (no multi-CDN fallback)", "No synthetic monitoring of CDN health", "Limited visibility into provider infrastructure"]
+  },
+  "expected_diagnosis": {
+    "root_cause_type_match": false,
+    "service_localization_match": true,
+    "change_attribution_match": false,
+    "min_confidence": 0.8,
+    "must_include_evidence_ids": ["ev-001-client-errors", "ev-002-cdn-status", "ev-003-no-deployments", "ev-004-no-config-changes"],
+    "must_not_claim": ["Local deployment caused CDN failures", "Our infrastructure caused the outage", "Root cause identified with 100% certainty"]
+  },
+  "misleading_or_confounding_signals": [
+    "Client errors look like frontend code issues (but are network timeouts)",
+    "CDN status page could be stale or inaccurate"
+  ],
+  "acceptable_alternatives": [
+    {
+      "description": "CloudFast CDN outage (most likely based on available evidence)",
+      "evidence_ids": ["ev-001-client-errors", "ev-002-cdn-status", "ev-005-dns-resolution"],
+      "confidence_range": [0.85, 0.95]
+    },
+    {
+      "description": "DNS hijacking or routing issue affecting CDN",
+      "evidence_ids": ["ev-005-dns-resolution"],
+      "confidence_range": [0.05, 0.15]
+    }
+  ],
+  "required_checks": [
+    {
+      "check_id": "chk-001-cdn-status",
+      "description": "Check CDN provider status page",
+      "tool": "get_dependency_status",
+      "expected_outcome": "CloudFast shows major outage",
+      "critical": true
+    },
+    {
+      "check_id": "chk-002-verify-no-local-changes",
+      "description": "Confirm no deployments or config changes",
+      "tool": "query_deployments",
+      "expected_outcome": "No changes in 24h window",
+      "critical": true
+    },
+    {
+      "check_id": "chk-003-dns-tcp-check",
+      "description": "Verify DNS resolves but connection fails",
+      "tool": "network_diagnostic",
+      "expected_outcome": "DNS OK, TCP timeout to CDN edges",
+      "critical": true
+    }
+  ],
+  "remediation_guidance": {
+    "suggestion": "Implement multi-CDN fallback; add synthetic CDN monitoring; configure client-side fallback to origin",
+    "risk_level": "low",
+    "test_plan": [
+      "Configure secondary CDN provider",
+      "Test failover in staging",
+      "Add CDN health checks to alerting"
+    ],
+    "rollback_plan": "No rollback needed; wait for provider recovery"
+  },
+  "tags": ["insufficient-evidence", "cdn-outage", "third-party", "external-dependency", "frontend"]
+}

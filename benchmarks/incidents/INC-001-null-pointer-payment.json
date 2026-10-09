@@ -1,0 +1,214 @@
+{
+  "schema_version": "1.0.0",
+  "case_id": "INC-001",
+  "title": "Null Pointer Dereference in Payment Service After Deployment",
+  "category": "unhandled_exception",
+  "scenario_type": "single_cause",
+  "difficulty": "easy",
+  "description": "A deployment introduced a null pointer dereference in PaymentService.charge() when processing payments with missing billing_address. The error manifests as HTTP 500 responses for affected requests. Stack traces clearly point to the new code path.",
+  "environment": {
+    "name": "production",
+    "region": "us-east-1",
+    "cluster": "prod-cluster-1"
+  },
+  "incident_window": {
+    "start": "2024-01-15T10:00:00Z",
+    "end": "2024-01-15T10:45:00Z",
+    "investigation_cutoff": "2024-01-15T10:15:00Z"
+  },
+  "initial_symptoms": [
+    "HTTP 500 responses from /api/v1/payments endpoint",
+    "Error rate spike: 0.1% → 12% in 2 minutes",
+    "PagerDuty alert: payment-service-high-error-rate"
+  ],
+  "affected_services": [
+    {
+      "service_id": "svc-001-payment",
+      "service_name": "payment-service",
+      "impact": "primary"
+    },
+    {
+      "service_id": "svc-002-checkout",
+      "service_name": "checkout-service",
+      "impact": "downstream"
+    }
+  ],
+  "evidence_catalog": [
+    {
+      "evidence_id": "ev-001-metric-error-rate",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:error_rate{service=payment-service}[5m]",
+      "event_time": "2024-01-15T10:00:00Z",
+      "collection_time": "2024-01-15T10:15:00Z",
+      "time_window_start": "2024-01-15T10:00:00Z",
+      "time_window_end": "2024-01-15T10:15:00Z",
+      "service_id": "svc-001-payment",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Error rate for payment-service increased from 0.1% to 12% over 5 minutes starting at 10:00 UTC",
+      "query_reference": "SELECT quantile(0.99)(http_request_duration_seconds) FROM http_requests WHERE service='payment-service' AND status=500",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate Prometheus metric samples with 5s resolution for payment-service showing error rate spike"
+    },
+    {
+      "evidence_id": "ev-002-log-null-pointer",
+      "evidence_type": "log",
+      "source": "telemetry_storage",
+      "source_reference": "trace_id=abc123-span-xyz",
+      "event_time": "2024-01-15T10:01:23Z",
+      "collection_time": "2024-01-15T10:15:00Z",
+      "service_id": "svc-001-payment",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "NullPointerException in PaymentService.charge() at line 142: billing_address.getZipCode() called on null",
+      "query_reference": "SELECT * FROM logs WHERE service='payment-service' AND level='ERROR' AND message LIKE '%NullPointerException%'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate structured log entries with stack trace showing line 142 in PaymentService.java"
+    },
+    {
+      "evidence_id": "ev-003-deployment-new-version",
+      "evidence_type": "deployment",
+      "source": "ci_system",
+      "source_reference": "deployment-id=deploy-789",
+      "event_time": "2024-01-15T09:55:00Z",
+      "collection_time": "2024-01-15T10:15:00Z",
+      "service_id": "svc-001-payment",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Deployment deploy-789 rolled out payment-service v2.3.1 at 09:55 UTC (5 minutes before incident)",
+      "query_reference": "GET /api/v1/deployments/deploy-789",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create deployment record with commit SHA and artifact references"
+    },
+    {
+      "evidence_id": "ev-004-commit-billing-change",
+      "evidence_type": "commit",
+      "source": "git_provider",
+      "source_reference": "commit=abc123def456",
+      "event_time": "2024-01-14T16:30:00Z",
+      "collection_time": "2024-01-15T10:15:00Z",
+      "service_id": "svc-001-payment",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Commit abc123def added billing_address validation but missed null check for optional field",
+      "query_reference": "GET /api/v1/repos/payment-service/commits/abc123def",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create commit with diff showing the problematic code change"
+    },
+    {
+      "evidence_id": "ev-005-trace-failed-request",
+      "evidence_type": "trace",
+      "source": "telemetry_storage",
+      "source_reference": "trace_id=abc123",
+      "event_time": "2024-01-15T10:01:23Z",
+      "collection_time": "2024-01-15T10:15:00Z",
+      "time_window_start": "2024-01-15T10:01:23Z",
+      "time_window_end": "2024-01-15T10:01:25Z",
+      "service_id": "svc-001-payment",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Trace shows failed request to payment-service/charge with 500 error, span error at PaymentService.charge",
+      "query_reference": "GET /api/v1/traces/abc123",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate OpenTelemetry trace with error span"
+    }
+  ],
+  "changes": [
+    {
+      "change_id": "chg-001-deploy-payment-v231",
+      "change_type": "deployment",
+      "timestamp": "2024-01-15T09:55:00Z",
+      "service_id": "svc-001-payment",
+      "summary": "Deployed payment-service v2.3.1 with billing address validation changes",
+      "commit_sha": "abc123def456",
+      "deployed_by": "ci-bot"
+    }
+  ],
+  "ground_truth": {
+    "root_cause_type": "code_defect",
+    "primary_service_id": "svc-001-payment",
+    "trigger_change_id": "chg-001-deploy-payment-v231",
+    "causal_chain": [
+      {
+        "from_type": "trigger",
+        "from_description": "Deployment of payment-service v2.3.1 with missing null check",
+        "to_type": "mechanism",
+        "to_description": "New code path in PaymentService.charge() dereferences null billing_address",
+        "evidence_ids": ["ev-003-deployment-new-version", "ev-004-commit-billing-change"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "mechanism",
+        "from_description": "NullPointerException thrown in PaymentService.charge()",
+        "to_type": "symptom",
+        "to_description": "HTTP 500 responses returned to checkout-service callers",
+        "evidence_ids": ["ev-002-log-null-pointer", "ev-005-trace-failed-request"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "symptom",
+        "from_description": "HTTP 500 error rate spike to 12%",
+        "to_type": "impact",
+        "to_description": "Checkout failures for users with missing billing_address",
+        "evidence_ids": ["ev-001-metric-error-rate"],
+        "confidence": 1.0
+      }
+    ],
+    "ambiguity_note": "",
+    "insufficient_evidence_note": "",
+    "contributing_factors": ["Missing unit test for null billing_address", "Code review missed the null check"]
+  },
+  "expected_diagnosis": {
+    "root_cause_type_match": true,
+    "service_localization_match": true,
+    "change_attribution_match": true,
+    "min_confidence": 0.9,
+    "must_include_evidence_ids": ["ev-001-metric-error-rate", "ev-002-log-null-pointer", "ev-003-deployment-new-version", "ev-004-commit-billing-change"],
+    "must_not_claim": ["Redis outage caused the errors", "Database connection pool exhausted"]
+  },
+  "misleading_or_confounding_signals": [
+    "Minor CPU spike on payment-service coincidentally at same time (unrelated GC)",
+    "Checkout-service also shows elevated errors (downstream effect, not root cause)"
+  ],
+  "acceptable_alternatives": [],
+  "required_checks": [
+    {
+      "check_id": "chk-001-verify-stack-trace",
+      "description": "Verify stack trace points to PaymentService.charge line 142",
+      "tool": "get_trace",
+      "expected_outcome": "Trace shows error at PaymentService.charge:142",
+      "critical": true
+    },
+    {
+      "check_id": "chk-002-verify-deployment-timing",
+      "description": "Confirm deployment occurred before incident start",
+      "tool": "get_deployment",
+      "expected_outcome": "Deployment at 09:55 UTC, incident at 10:00 UTC",
+      "critical": true
+    },
+    {
+      "check_id": "chk-003-check-commit-diff",
+      "description": "Examine commit diff for missing null check",
+      "tool": "get_commit",
+      "expected_outcome": "Diff shows billing_address validation without null guard",
+      "critical": true
+    }
+  ],
+  "remediation_guidance": {
+    "suggestion": "Add null check for billing_address in PaymentService.charge() before calling getZipCode()",
+    "risk_level": "low",
+    "test_plan": [
+      "Add unit test for charge() with null billing_address",
+      "Add integration test for payment flow with missing billing address",
+      "Canary deploy to 5% traffic for 30 minutes"
+    ],
+    "rollback_plan": "Rollback to payment-service v2.3.0 via deployment pipeline"
+  },
+  "tags": ["null-pointer", "deployment", "payment-service", "java"]
+}

@@ -1,0 +1,203 @@
+{
+  "schema_version": "1.0.0",
+  "case_id": "INC-009",
+  "title": "Background Queue Backlog in Email Service Due to Stuck Jobs",
+  "category": "queue_backlog",
+  "scenario_type": "single_cause",
+  "difficulty": "medium",
+  "description": "Email service background job queue backed up due to a malformed email template causing jobs to fail and retry indefinitely. Queue depth grew to 500k messages, processing latency exceeded 4 hours.",
+  "environment": {
+    "name": "production",
+    "region": "us-east-1",
+    "cluster": "prod-cluster-1"
+  },
+  "incident_window": {
+    "start": "2024-01-23T06:00:00Z",
+    "end": "2024-01-23T12:00:00Z",
+    "investigation_cutoff": "2024-01-23T08:00:00Z"
+  },
+  "initial_symptoms": [
+    "Transactional emails not sending (welcome, receipts, notifications)",
+    "Queue depth: 500k messages and growing",
+    "Email service workers at 100% CPU but throughput near zero",
+    "Dead letter queue growing rapidly"
+  ],
+  "affected_services": [
+    {
+      "service_id": "svc-011-email",
+      "service_name": "email-service",
+      "impact": "primary"
+    }
+  ],
+  "evidence_catalog": [
+    {
+      "evidence_id": "ev-001-metric-queue-depth",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:queue_depth{service=email-service,queue=emails}[1h]",
+      "event_time": "2024-01-23T06:00:00Z",
+      "collection_time": "2024-01-23T08:00:00Z",
+      "time_window_start": "2024-01-23T06:00:00Z",
+      "time_window_end": "2024-01-23T08:00:00Z",
+      "service_id": "svc-011-email",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Email queue depth grew from 10k to 500k over 2 hours",
+      "query_reference": "SELECT queue_depth FROM queue_metrics WHERE service='email-service' AND queue='emails'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate queue depth metrics"
+    },
+    {
+      "evidence_id": "ev-002-log-template-error",
+      "evidence_type": "log",
+      "source": "telemetry_storage",
+      "source_reference": "email-worker-logs",
+      "event_time": "2024-01-23T06:05:00Z",
+      "collection_time": "2024-01-23T08:00:00Z",
+      "service_id": "svc-011-email",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Worker logs show 'Template rendering failed: undefined variable user.referral_code' repeating for same message ID",
+      "query_reference": "SELECT * FROM worker_logs WHERE service='email-service' AND message LIKE '%undefined variable%'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate worker error logs"
+    },
+    {
+      "evidence_id": "ev-003-deployment-template-change",
+      "evidence_type": "deployment",
+      "source": "ci_system",
+      "source_reference": "deployment-id=deploy-794",
+      "event_time": "2024-01-22T20:00:00Z",
+      "collection_time": "2024-01-23T08:00:00Z",
+      "service_id": "svc-011-email",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Deployment deploy-794 updated email templates including new referral email",
+      "query_reference": "GET /api/v1/deployments/deploy-794",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create deployment with template changes"
+    },
+    {
+      "evidence_id": "ev-004-commit-template",
+      "evidence_type": "commit",
+      "source": "git_provider",
+      "source_reference": "commit=opq123rst456",
+      "event_time": "2024-01-22T15:00:00Z",
+      "collection_time": "2024-01-23T08:00:00Z",
+      "service_id": "svc-011-email",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Commit added referral_code variable to welcome template but not all user objects have it",
+      "query_reference": "GET /api/v1/repos/email-service/commits/opq123rst456",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create commit with template diff"
+    },
+    {
+      "evidence_id": "ev-005-metric-retry-rate",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:job_retry_rate{service=email-service}[1h]",
+      "event_time": "2024-01-23T06:00:00Z",
+      "collection_time": "2024-01-23T08:00:00Z",
+      "time_window_start": "2024-01-23T06:00:00Z",
+      "time_window_end": "2024-01-23T08:00:00Z",
+      "service_id": "svc-011-email",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Job retry rate increased from 0.1% to 95% as same failed messages retry indefinitely",
+      "query_reference": "SELECT job_retries / job_attempts FROM job_metrics WHERE service='email-service'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate job retry metrics"
+    }
+  ],
+  "changes": [
+    {
+      "change_id": "chg-001-deploy-email-templates",
+      "change_type": "deployment",
+      "timestamp": "2024-01-22T20:00:00Z",
+      "service_id": "svc-011-email",
+      "summary": "Deployed new email templates with referral_code variable",
+      "commit_sha": "opq123rst456",
+      "deployed_by": "ci-bot"
+    }
+  ],
+  "ground_truth": {
+    "root_cause_type": "code_defect",
+    "primary_service_id": "svc-011-email",
+    "trigger_change_id": "chg-001-deploy-email-templates",
+    "causal_chain": [
+      {
+        "from_type": "trigger",
+        "from_description": "Deployment added referral_code to template without handling missing data",
+        "to_type": "mechanism",
+        "to_description": "Template rendering fails for users without referral_code, job retries indefinitely",
+        "evidence_ids": ["ev-003-deployment-template-change", "ev-004-commit-template"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "mechanism",
+        "from_description": "Failed jobs re-queued with no backoff limit, clogging queue",
+        "to_type": "symptom",
+        "to_description": "Queue depth 500k, throughput near zero, dead letter queue growing",
+        "evidence_ids": ["ev-001-metric-queue-depth", "ev-002-log-template-error", "ev-005-metric-retry-rate"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "symptom",
+        "from_description": "Transactional emails not delivered for 6+ hours",
+        "to_type": "impact",
+        "to_description": "Users not receiving welcome emails, receipts, notifications",
+        "evidence_ids": ["ev-001-metric-queue-depth"],
+        "confidence": 1.0
+      }
+    ],
+    "ambiguity_note": "",
+    "insufficient_evidence_note": "",
+    "contributing_factors": ["No template validation in CI", "No max retry limit on queue", "No dead letter alerting"]
+  },
+  "expected_diagnosis": {
+    "root_cause_type_match": true,
+    "service_localization_match": true,
+    "change_attribution_match": true,
+    "min_confidence": 0.9,
+    "must_include_evidence_ids": ["ev-001-metric-queue-depth", "ev-002-log-template-error", "ev-004-commit-template"],
+    "must_not_claim": ["Email provider (SendGrid) outage", "Database issue causing queue backup"]
+  },
+  "misleading_or_confounding_signals": [
+    "Email service CPU high (workers busy retrying)",
+    "Database connections high (workers polling queue)"
+  ],
+  "acceptable_alternatives": [],
+  "required_checks": [
+    {
+      "check_id": "chk-001-queue-inspect",
+      "description": "Inspect queue for repeated message IDs",
+      "tool": "inspect_queue",
+      "expected_outcome": "Same message IDs retrying with template error",
+      "critical": true
+    },
+    {
+      "check_id": "chk-002-template-validation",
+      "description": "Check template for undefined variables",
+      "tool": "get_commit",
+      "expected_outcome": "Template references user.referral_code not always present",
+      "critical": true
+    }
+  ],
+  "remediation_guidance": {
+    "suggestion": "Fix template to handle missing referral_code; add max retry limit; move poison messages to dead letter",
+    "risk_level": "low",
+    "test_plan": [
+      "Test template with user objects missing referral_code",
+      "Add max retries=3 to queue config",
+      "Drain dead letter queue after fix"
+    ],
+    "rollback_plan": "Rollback to previous email templates"
+  },
+  "tags": ["queue-backlog", "template-error", "email-service", "retry-storm"]
+}

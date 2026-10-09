@@ -1,0 +1,202 @@
+{
+  "schema_version": "1.0.0",
+  "case_id": "INC-012",
+  "title": "Configuration Drift Causes Feature Flag Evaluation Failure",
+  "category": "config_drift",
+  "scenario_type": "single_cause",
+  "difficulty": "medium",
+  "description": "Feature flag service configuration drifted between regions. The 'new-checkout-flow' flag was enabled in us-east-1 but disabled in eu-west-1 due to a manual config change that wasn't synced. Users in EU experienced broken checkout.",
+  "environment": {
+    "name": "production",
+    "region": "eu-west-1",
+    "cluster": "prod-cluster-2"
+  },
+  "incident_window": {
+    "start": "2024-01-26T14:00:00Z",
+    "end": "2024-01-26T15:00:00Z",
+    "investigation_cutoff": "2024-01-26T14:15:00Z"
+  },
+  "initial_symptoms": [
+    "EU users unable to complete checkout (US users fine)",
+    "Checkout page shows 'Feature unavailable' error",
+    "Feature flag 'new-checkout-flow' returns false in EU",
+    "No deployment or code change at incident time"
+  ],
+  "affected_services": [
+    {
+      "service_id": "svc-002-checkout",
+      "service_name": "checkout-service",
+      "impact": "primary"
+    }
+  ],
+  "evidence_catalog": [
+    {
+      "evidence_id": "ev-001-metric-checkout-fail-eu",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:checkout_failure_rate{service=checkout-service,region=eu-west-1}[15m]",
+      "event_time": "2024-01-26T14:00:00Z",
+      "collection_time": "2024-01-26T14:15:00Z",
+      "time_window_start": "2024-01-26T14:00:00Z",
+      "time_window_end": "2024-01-26T14:15:00Z",
+      "service_id": "svc-002-checkout",
+      "environment_id": "env-prod-eu-west-1",
+      "summary": "Checkout failure rate in eu-west-1 spiked to 95% at 14:00 UTC; us-east-1 normal",
+      "query_reference": "SELECT failure_rate FROM checkout_metrics WHERE region='eu-west-1'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate region-specific checkout metrics"
+    },
+    {
+      "evidence_id": "ev-002-config-flag-eu",
+      "evidence_type": "configuration",
+      "source": "application_state",
+      "source_reference": "config:feature-flags.new-checkout-flow@eu-west-1=false",
+      "event_time": "2024-01-26T13:55:00Z",
+      "collection_time": "2024-01-26T14:15:00Z",
+      "service_id": "svc-002-checkout",
+      "environment_id": "env-prod-eu-west-1",
+      "summary": "Feature flag new-checkout-flow is disabled in eu-west-1 (set false at 13:55 UTC)",
+      "query_reference": "GET /api/v1/feature-flags/new-checkout-flow?region=eu-west-1",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create feature flag config with region override"
+    },
+    {
+      "evidence_id": "ev-003-config-flag-us",
+      "evidence_type": "configuration",
+      "source": "application_state",
+      "source_reference": "config:feature-flags.new-checkout-flow@us-east-1=true",
+      "event_time": "2024-01-26T14:00:00Z",
+      "collection_time": "2024-01-26T14:15:00Z",
+      "service_id": "svc-002-checkout",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Feature flag new-checkout-flow is enabled in us-east-1",
+      "query_reference": "GET /api/v1/feature-flags/new-checkout-flow?region=us-east-1",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create feature flag config for US region"
+    },
+    {
+      "evidence_id": "ev-004-config-audit",
+      "evidence_type": "configuration",
+      "source": "application_state",
+      "source_reference": "config-audit:feature-flags.new-checkout-flow",
+      "event_time": "2024-01-26T13:55:00Z",
+      "collection_time": "2024-01-26T14:15:00Z",
+      "service_id": "svc-002-checkout",
+      "environment_id": "env-prod-eu-west-1",
+      "summary": "Config audit log shows manual change: new-checkout-flow set to false in eu-west-1 by user 'ops-engineer-1'",
+      "query_reference": "GET /api/v1/config-audit/feature-flags/new-checkout-flow",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create config audit log entry"
+    },
+    {
+      "evidence_id": "ev-005-trace-flag-check",
+      "evidence_type": "trace",
+      "source": "telemetry_storage",
+      "source_reference": "trace_id=checkout-eu-001",
+      "event_time": "2024-01-26T14:01:00Z",
+      "collection_time": "2024-01-26T14:15:00Z",
+      "time_window_start": "2024-01-26T14:01:00Z",
+      "time_window_end": "2024-01-26T14:01:05Z",
+      "service_id": "svc-002-checkout",
+      "environment_id": "env-prod-eu-west-1",
+      "summary": "Trace shows checkout-service checking feature flag, receiving false, returning 'Feature unavailable'",
+      "query_reference": "GET /api/v1/traces/checkout-eu-001",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate trace showing feature flag check"
+    }
+  ],
+  "changes": [
+    {
+      "change_id": "chg-001-config-flag-disabled",
+      "change_type": "config_change",
+      "timestamp": "2024-01-26T13:55:00Z",
+      "service_id": "svc-002-checkout",
+      "summary": "Feature flag new-checkout-flow manually disabled in eu-west-1",
+      "details": { "previous_value": true, "new_value": false, "changed_by": "ops-engineer-1" }
+    }
+  ],
+  "ground_truth": {
+    "root_cause_type": "config_error",
+    "primary_service_id": "svc-002-checkout",
+    "trigger_change_id": "chg-001-config-flag-disabled",
+    "causal_chain": [
+      {
+        "from_type": "trigger",
+        "from_description": "Manual config change disabled feature flag in eu-west-1 only",
+        "to_type": "mechanism",
+        "to_description": "Checkout service evaluates flag, gets false, returns 'Feature unavailable'",
+        "evidence_ids": ["ev-002-config-flag-eu", "ev-004-config-audit"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "mechanism",
+        "from_description": "Flag disabled in EU but enabled in US (config drift)",
+        "to_type": "symptom",
+        "to_description": "EU users see checkout failure; US users unaffected",
+        "evidence_ids": ["ev-001-metric-checkout-fail-eu", "ev-003-config-flag-us", "ev-005-trace-flag-check"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "symptom",
+        "from_description": "EU checkout completely broken",
+        "to_type": "impact",
+        "to_description": "EU revenue impact; user complaints",
+        "evidence_ids": ["ev-001-metric-checkout-fail-eu"],
+        "confidence": 1.0
+      }
+    ],
+    "ambiguity_note": "",
+    "insufficient_evidence_note": "",
+    "contributing_factors": ["No config sync between regions", "Manual config changes not tracked in Git", "No drift detection alerting"]
+  },
+  "expected_diagnosis": {
+    "root_cause_type_match": true,
+    "service_localization_match": true,
+    "change_attribution_match": true,
+    "min_confidence": 0.95,
+    "must_include_evidence_ids": ["ev-001-metric-checkout-fail-eu", "ev-002-config-flag-eu", "ev-004-config-audit"],
+    "must_not_claim": ["Code deployment caused EU checkout failure", "Database issue in EU region"]
+  },
+  "misleading_or_confounding_signals": [
+    "No deployment at incident time (config change only)",
+    "US region works fine (misleading - suggests code is fine)"
+  ],
+  "acceptable_alternatives": [],
+  "required_checks": [
+    {
+      "check_id": "chk-001-flag-status",
+      "description": "Check feature flag status per region",
+      "tool": "get_config",
+      "expected_outcome": "Flag false in eu-west-1, true in us-east-1",
+      "critical": true
+    },
+    {
+      "check_id": "chk-002-config-audit",
+      "description": "Check config audit log for recent changes",
+      "tool": "get_config_audit",
+      "expected_outcome": "Manual change at 13:55 UTC by ops-engineer-1",
+      "critical": true
+    }
+  ],
+  "remediation_guidance": {
+    "suggestion": "Re-enable feature flag in eu-west-1; implement config sync across regions; add drift detection",
+    "risk_level": "low",
+    "test_plan": [
+      "Enable flag in eu-west-1 staging",
+      "Verify checkout works in EU",
+      "Add config drift detection to CI"
+    ],
+    "rollback_plan": "Config change only; re-enable flag"
+  },
+  "tags": ["config-drift", "feature-flag", "multi-region", "checkout-service", "manual-change"]
+}

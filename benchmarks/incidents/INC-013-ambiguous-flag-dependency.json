@@ -1,0 +1,215 @@
+{
+  "schema_version": "1.0.0",
+  "case_id": "INC-013",
+  "title": "Feature Flag Regression: Deployment and Dependency Outage Simultaneous",
+  "category": "feature_flag_regression",
+  "scenario_type": "ambiguous",
+  "difficulty": "hard",
+  "description": "A deployment enabled a new feature flag 'recommendations-v2' at the same time the recommendation service dependency experienced an outage. Evidence cannot distinguish whether the symptom (recommendation failures) is caused by the new flag code or the dependency outage.",
+  "environment": {
+    "name": "production",
+    "region": "us-east-1",
+    "cluster": "prod-cluster-1"
+  },
+  "incident_window": {
+    "start": "2024-01-27T10:00:00Z",
+    "end": "2024-01-27T11:00:00Z",
+    "investigation_cutoff": "2024-01-27T10:15:00Z"
+  },
+  "initial_symptoms": [
+    "Recommendation API returning 500 errors",
+    "New feature flag 'recommendations-v2' enabled at 09:55 UTC",
+    "Recommendation service (external) showing degraded at 10:00 UTC",
+    "Cannot determine which caused the failures"
+  ],
+  "affected_services": [
+    {
+      "service_id": "svc-014-recommendation",
+      "service_name": "recommendation-service",
+      "impact": "primary"
+    }
+  ],
+  "evidence_catalog": [
+    {
+      "evidence_id": "ev-001-metric-rec-failures",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:recommendation_error_rate{service=recommendation-service}[15m]",
+      "event_time": "2024-01-27T10:00:00Z",
+      "collection_time": "2024-01-27T10:15:00Z",
+      "time_window_start": "2024-01-27T10:00:00Z",
+      "time_window_end": "2024-01-27T10:15:00Z",
+      "service_id": "svc-014-recommendation",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Recommendation service error rate spiked to 80% at 10:00 UTC",
+      "query_reference": "SELECT error_rate FROM recommendation_metrics WHERE service='recommendation-service'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate recommendation error metrics"
+    },
+    {
+      "evidence_id": "ev-002-deployment-flag-enabled",
+      "evidence_type": "deployment",
+      "source": "ci_system",
+      "source_reference": "deployment-id=deploy-797",
+      "event_time": "2024-01-27T09:55:00Z",
+      "collection_time": "2024-01-27T10:15:00Z",
+      "service_id": "svc-014-recommendation",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Deployment deploy-797 enabled feature flag recommendations-v2 at 09:55 UTC",
+      "query_reference": "GET /api/v1/deployments/deploy-797",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create deployment with feature flag enablement"
+    },
+    {
+      "evidence_id": "ev-003-dependency-outage",
+      "evidence_type": "dependency_status",
+      "source": "application_state",
+      "source_reference": "dependency:recommendation-engine.status=degraded",
+      "event_time": "2024-01-27T10:00:00Z",
+      "collection_time": "2024-01-27T10:15:00Z",
+      "service_id": "svc-014-recommendation",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "External recommendation engine API degraded: 50% error rate, 10s latency at 10:00 UTC",
+      "query_reference": "GET /api/v1/dependencies/recommendation-engine",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create external dependency status"
+    },
+    {
+      "evidence_id": "ev-004-trace-flag-path",
+      "evidence_type": "trace",
+      "source": "telemetry_storage",
+      "source_reference": "trace_id=rec-flag-001",
+      "event_time": "2024-01-27T10:02:00Z",
+      "collection_time": "2024-01-27T10:15:00Z",
+      "time_window_start": "2024-01-27T10:02:00Z",
+      "time_window_end": "2024-01-27T10:02:10Z",
+      "service_id": "svc-014-recommendation",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Trace shows code path for recommendations-v2 flag enabled, but external call to recommendation-engine fails",
+      "query_reference": "GET /api/v1/traces/rec-flag-001",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate trace showing both flag path and dependency call"
+    },
+    {
+      "evidence_id": "ev-005-trace-old-path",
+      "evidence_type": "trace",
+      "source": "telemetry_storage",
+      "source_reference": "trace_id=rec-old-001",
+      "event_time": "2024-01-27T10:03:00Z",
+      "collection_time": "2024-01-27T10:15:00Z",
+      "time_window_start": "2024-01-27T10:03:00Z",
+      "time_window_end": "2024-01-27T10:03:10Z",
+      "service_id": "svc-014-recommendation",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Trace with old code path (flag off) also shows recommendation-engine failures",
+      "query_reference": "GET /api/v1/traces/rec-old-001",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate trace showing old path also failing"
+    },
+    {
+      "evidence_id": "ev-006-commit-flag-code",
+      "evidence_type": "commit",
+      "source": "git_provider",
+      "source_reference": "commit=ghi333jkl444",
+      "event_time": "2024-01-26T14:00:00Z",
+      "collection_time": "2024-01-27T10:15:00Z",
+      "service_id": "svc-014-recommendation",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Commit added new recommendation algorithm under flag; code review approved",
+      "query_reference": "GET /api/v1/repos/recommendation-service/commits/ghi333jkl444",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create commit with new algorithm code"
+    }
+  ],
+  "changes": [
+    {
+      "change_id": "chg-001-deploy-flag-enabled",
+      "change_type": "feature_flag",
+      "timestamp": "2024-01-27T09:55:00Z",
+      "service_id": "svc-014-recommendation",
+      "summary": "Feature flag recommendations-v2 enabled via deployment",
+      "details": { "flag": "recommendations-v2", "enabled": true }
+    }
+  ],
+  "ground_truth": {
+    "root_cause_type": "ambiguous",
+    "primary_service_id": "svc-014-recommendation",
+    "trigger_change_id": "",
+    "causal_chain": [],
+    "ambiguity_note": "Both the new feature flag code path AND the external recommendation engine outage started at nearly the same time (09:55 vs 10:00). Traces show BOTH code paths (old and new) fail due to the external dependency. Cannot determine if the new code would have worked had the dependency been healthy. The symptom (recommendation failures) is fully explained by the dependency outage; the flag enablement is coincidental in timing.",
+    "insufficient_evidence_note": "",
+    "contributing_factors": ["Simultaneous deployment and dependency outage", "No canary for feature flag", "No synthetic monitoring of recommendation engine"]
+  },
+  "expected_diagnosis": {
+    "root_cause_type_match": false,
+    "service_localization_match": true,
+    "change_attribution_match": false,
+    "min_confidence": 0.3,
+    "must_include_evidence_ids": ["ev-001-metric-rec-failures", "ev-003-dependency-outage", "ev-004-trace-flag-path", "ev-005-trace-old-path"],
+    "must_not_claim": ["Feature flag code caused the outage", "Deployment definitely caused the failures"]
+  },
+  "misleading_or_confounding_signals": [
+    "Deployment at 09:55, failures at 10:00 (temporal correlation ≠ causation)",
+    "New code path enabled (but old path also fails)",
+    "External dependency degraded (fully explains symptoms)"
+  ],
+  "acceptable_alternatives": [
+    {
+      "description": "External recommendation engine outage is the cause; flag enablement coincidental",
+      "evidence_ids": ["ev-003-dependency-outage", "ev-005-trace-old-path"],
+      "confidence_range": [0.7, 0.9]
+    },
+    {
+      "description": "New flag code has bug that manifests only when dependency is slow",
+      "evidence_ids": ["ev-002-deployment-flag-enabled", "ev-004-trace-flag-path"],
+      "confidence_range": [0.3, 0.6]
+    }
+  ],
+  "required_checks": [
+    {
+      "check_id": "chk-001-dependency-health",
+      "description": "Check recommendation engine health independently",
+      "tool": "get_dependency_status",
+      "expected_outcome": "Engine shows degraded regardless of flag",
+      "critical": true
+    },
+    {
+      "check_id": "chk-002-compare-paths",
+      "description": "Compare old vs new code path failure rates",
+      "tool": "query_traces",
+      "expected_outcome": "Both paths show similar failure rates",
+      "critical": true
+    },
+    {
+      "check_id": "chk-003-flag-rollback-test",
+      "description": "Disable flag and observe if failures persist",
+      "tool": "toggle_feature_flag",
+      "expected_outcome": "Failures persist with flag off (proves dependency cause)",
+      "critical": true
+    }
+  ],
+  "remediation_guidance": {
+    "suggestion": "Cannot determine root cause with current evidence. Recommend: 1) Disable flag to isolate, 2) Wait for dependency recovery, 3) Re-enable flag with canary. If failures persist with flag off → dependency cause. If failures stop → flag code cause.",
+    "risk_level": "medium",
+    "test_plan": [
+      "Disable recommendations-v2 flag",
+      "Monitor recommendation error rate",
+      "If errors persist: escalate to recommendation engine team",
+      "If errors stop: investigate flag code"
+    ],
+    "rollback_plan": "Disable recommendations-v2 flag immediately"
+  },
+  "tags": ["ambiguous", "feature-flag", "dependency-outage", "simultaneous-events", "recommendation-service"]
+}

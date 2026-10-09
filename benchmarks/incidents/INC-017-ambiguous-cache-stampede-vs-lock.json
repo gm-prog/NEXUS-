@@ -1,0 +1,227 @@
+{
+  "schema_version": "1.0.0",
+  "case_id": "INC-017",
+  "title": "Two Plausible Causes: Cache Stampede vs Database Lock Contention",
+  "category": "cache_stampede",
+  "scenario_type": "ambiguous",
+  "difficulty": "expert",
+  "description": "Product catalog API latency spiked. Two plausible causes: 1) Cache stampede - popular cache key expired, all requests hit DB simultaneously. 2) Database lock contention - long-running migration holds locks. Evidence supports both; need specific verification to distinguish.",
+  "environment": {
+    "name": "production",
+    "region": "us-east-1",
+    "cluster": "prod-cluster-1"
+  },
+  "incident_window": {
+    "start": "2024-01-31T14:00:00Z",
+    "end": "2024-01-31T14:45:00Z",
+    "investigation_cutoff": "2024-01-31T14:15:00Z"
+  },
+  "initial_symptoms": [
+    "Product catalog API p99 latency: 50ms → 8s",
+    "Database CPU at 95%",
+    "Cache hit rate dropped from 98% to 15%",
+    "Long-running migration detected on products table"
+  ],
+  "affected_services": [
+    {
+      "service_id": "svc-006-product",
+      "service_name": "product-service",
+      "impact": "primary"
+    },
+    {
+      "service_id": "svc-007-db-primary",
+      "service_name": "postgresql-primary",
+      "impact": "downstream"
+    }
+  ],
+  "evidence_catalog": [
+    {
+      "evidence_id": "ev-001-metric-latency-spike",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:api_latency{service=product-service,endpoint=/catalog}[5m]",
+      "event_time": "2024-01-31T14:00:00Z",
+      "collection_time": "2024-01-31T14:15:00Z",
+      "time_window_start": "2024-01-31T14:00:00Z",
+      "time_window_end": "2024-01-31T14:15:00Z",
+      "service_id": "svc-006-product",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Product catalog API p99 latency spiked from 50ms to 8s at 14:00 UTC",
+      "query_reference": "SELECT quantile(0.99)(http_duration) FROM http_requests WHERE service='product-service' AND path='/catalog'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate API latency metrics"
+    },
+    {
+      "evidence_id": "ev-002-metric-cache-hit-drop",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:cache_hit_rate{service=product-service,cache=catalog}[5m]",
+      "event_time": "2024-01-31T14:00:00Z",
+      "collection_time": "2024-01-31T14:15:00Z",
+      "time_window_start": "2024-01-31T14:00:00Z",
+      "time_window_end": "2024-01-31T14:15:00Z",
+      "service_id": "svc-006-product",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Catalog cache hit rate dropped from 98% to 15% at 14:00 UTC",
+      "query_reference": "SELECT hit_rate FROM cache_metrics WHERE service='product-service' AND cache='catalog'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate cache hit rate metrics"
+    },
+    {
+      "evidence_id": "ev-003-metric-db-cpu",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:db_cpu{instance=postgresql-primary}[5m]",
+      "event_time": "2024-01-31T14:00:30Z",
+      "collection_time": "2024-01-31T14:15:00Z",
+      "time_window_start": "2024-01-31T14:00:30Z",
+      "time_window_end": "2024-01-31T14:15:00Z",
+      "service_id": "svc-007-db-primary",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Database CPU spiked to 95% at 14:00:30 UTC (30s after cache drop)",
+      "query_reference": "SELECT cpu_percent FROM db_metrics WHERE instance='postgresql-primary'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate DB CPU metrics"
+    },
+    {
+      "evidence_id": "ev-004-migration-running",
+      "evidence_type": "log",
+      "source": "telemetry_storage",
+      "source_reference": "postgres-pg_stat_activity",
+      "event_time": "2024-01-31T13:55:00Z",
+      "collection_time": "2024-01-31T14:15:00Z",
+      "service_id": "svc-007-db-primary",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Long-running migration (ALTER TABLE products ADD COLUMN) started at 13:55, holding AccessExclusiveLock",
+      "query_reference": "SELECT * FROM pg_stat_activity WHERE state='active' AND query LIKE '%ALTER TABLE products%'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate pg_stat_activity showing migration lock"
+    },
+    {
+      "evidence_id": "ev-005-cache-key-ttl",
+      "evidence_type": "configuration",
+      "source": "application_state",
+      "source_reference": "config:product-service.cache.catalog.ttl=300",
+      "event_time": "2024-01-31T14:00:00Z",
+      "collection_time": "2024-01-31T14:15:00Z",
+      "service_id": "svc-006-product",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Catalog cache TTL is 300s; key likely expired at 14:00 (last refresh ~13:55)",
+      "query_reference": "GET /api/v1/config/product-service",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create cache TTL config"
+    },
+    {
+      "evidence_id": "ev-006-lock-waits",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:db_lock_waits{instance=postgresql-primary}[5m]",
+      "event_time": "2024-01-31T14:00:00Z",
+      "collection_time": "2024-01-31T14:15:00Z",
+      "time_window_start": "2024-01-31T14:00:00Z",
+      "time_window_end": "2024-01-31T14:15:00Z",
+      "service_id": "svc-007-db-primary",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Database lock wait count increased from 0 to 5000/sec at 14:00 UTC",
+      "query_reference": "SELECT lock_waits_per_sec FROM db_metrics WHERE instance='postgresql-primary'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate lock wait metrics"
+    }
+  ],
+  "changes": [
+    {
+      "change_id": "chg-001-migration-products",
+      "change_type": "deployment",
+      "timestamp": "2024-01-31T13:55:00Z",
+      "service_id": "svc-007-db-primary",
+      "summary": "Database migration ALTER TABLE products started",
+      "details": { "migration": "add column", "lock_type": "AccessExclusiveLock" }
+    }
+  ],
+  "ground_truth": {
+    "root_cause_type": "ambiguous",
+    "primary_service_id": "svc-006-product",
+    "trigger_change_id": "chg-001-migration-products",
+    "causal_chain": [],
+    "ambiguity_note": "Both cache stampede AND database lock contention are occurring simultaneously. Cache key expired at ~14:00 (TTL 300s, last refresh ~13:55), causing stampede. Simultaneously, migration started at 13:55 holding AccessExclusiveLock on products table, causing lock contention for all catalog queries. The evidence cannot distinguish which is the PRIMARY driver. Cache miss rate drop and lock waits both spike at 14:00. The migration lock would block cache population queries too. Need to either: 1) Kill migration and see if latency recovers (lock cause), or 2) Pre-warm cache and see if latency recovers (stampede cause).",
+    "insufficient_evidence_note": "",
+    "contributing_factors": ["Migration scheduled during peak traffic", "No cache stampede protection (probabilistic early expiration)", "Short cache TTL for high-traffic key", "No migration lock timeout"]
+  },
+  "expected_diagnosis": {
+    "root_cause_type_match": false,
+    "service_localization_match": true,
+    "change_attribution_match": false,
+    "min_confidence": 0.4,
+    "must_include_evidence_ids": ["ev-001-metric-latency-spike", "ev-002-metric-cache-hit-drop", "ev-004-migration-running", "ev-006-lock-waits"],
+    "must_not_claim": ["Cache stampede definitively caused it", "Migration lock definitively caused it"]
+  },
+  "misleading_or_confounding_signals": [
+    "Both cache miss and lock contention spike at same time",
+    "Migration started 5 min before (could be coincidence)",
+    "Cache TTL expiration aligns with incident start"
+  ],
+  "acceptable_alternatives": [
+    {
+      "description": "Cache stampede primary: key expired, all requests hit DB, migration lock made it worse",
+      "evidence_ids": ["ev-002-metric-cache-hit-drop", "ev-005-cache-key-ttl"],
+      "confidence_range": [0.45, 0.65]
+    },
+    {
+      "description": "Migration lock primary: blocked all queries including cache population; cache miss is symptom",
+      "evidence_ids": ["ev-004-migration-running", "ev-006-lock-waits"],
+      "confidence_range": [0.45, 0.65]
+    },
+    {
+      "description": "Combined: both factors necessary for severity; neither alone would cause 8s latency",
+      "evidence_ids": ["ev-002-metric-cache-hit-drop", "ev-004-migration-running", "ev-006-lock-waits"],
+      "confidence_range": [0.3, 0.5]
+    }
+  ],
+  "required_checks": [
+    {
+      "check_id": "chk-001-kill-migration",
+      "description": "Kill migration and observe latency (if recovers → lock cause)",
+      "tool": "execute_db_command",
+      "expected_outcome": "If latency drops → lock was primary cause",
+      "critical": true
+    },
+    {
+      "check_id": "chk-002-prewarm-cache",
+      "description": "Pre-warm cache and observe (if recovers → stampede cause)",
+      "tool": "cache_warmup",
+      "expected_outcome": "If latency drops → stampede was primary cause",
+      "critical": true
+    },
+    {
+      "check_id": "chk-003-lock-analysis",
+      "description": "Analyze which queries are blocked by migration lock",
+      "tool": "query_database",
+      "expected_outcome": "Show catalog queries blocked by AccessExclusiveLock",
+      "critical": true
+    }
+  ],
+  "remediation_guidance": {
+    "suggestion": "Cannot determine single cause with current evidence. Run verification checks. Long-term: add probabilistic cache expiration, schedule migrations off-peak, add lock timeouts.",
+    "risk_level": "high",
+    "test_plan": [
+      "Run verification checks in order",
+      "Implement cache stampede protection (jittered TTL)",
+      "Add migration lock timeout",
+      "Schedule migrations during low traffic"
+    ],
+    "rollback_plan": "Kill migration; pre-warm cache; both are safe rollback actions"
+  },
+  "tags": ["ambiguous", "cache-stampede", "db-lock-contention", "migration", "product-service", "verification-needed"]
+}

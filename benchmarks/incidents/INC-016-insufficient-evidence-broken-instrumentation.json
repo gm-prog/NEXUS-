@@ -1,0 +1,207 @@
+{
+  "schema_version": "1.0.0",
+  "case_id": "INC-016",
+  "title": "Metric Alert Caused by Broken Instrumentation Not Real Issue",
+  "category": "http_5xx_burst",
+  "scenario_type": "insufficient_evidence",
+  "difficulty": "hard",
+  "description": "Alert fired for 'HTTP 5xx rate > 5%' on user-service. Investigation reveals the metric itself is wrong: a recent instrumentation change doubled the error counter increment. Actual error rate is normal. The alert is a false positive caused by broken instrumentation.",
+  "environment": {
+    "name": "production",
+    "region": "us-east-1",
+    "cluster": "prod-cluster-1"
+  },
+  "incident_window": {
+    "start": "2024-01-30T09:00:00Z",
+    "end": "2024-01-30T09:30:00Z",
+    "investigation_cutoff": "2024-01-30T09:10:00Z"
+  },
+  "initial_symptoms": [
+    "Alert: user-service HTTP 5xx rate > 5%",
+    "Dashboard shows error rate spike from 0.5% to 8%",
+    "But manual log inspection shows normal error volume",
+    "Recent instrumentation change deployed"
+  ],
+  "affected_services": [
+    {
+      "service_id": "svc-004-user",
+      "service_name": "user-service",
+      "impact": "primary"
+    }
+  ],
+  "evidence_catalog": [
+    {
+      "evidence_id": "ev-001-metric-5xx-spike",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:http_5xx_rate{service=user-service}[5m]",
+      "event_time": "2024-01-30T09:00:00Z",
+      "collection_time": "2024-01-30T09:10:00Z",
+      "time_window_start": "2024-01-30T09:00:00Z",
+      "time_window_end": "2024-01-30T09:10:00Z",
+      "service_id": "svc-004-user",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Metric shows HTTP 5xx rate spiked from 0.5% to 8% at 09:00 UTC",
+      "query_reference": "SELECT http_5xx_rate FROM service_metrics WHERE service='user-service'",
+      "data_provenance": "derived_calculation",
+      "integrity_status": "unverified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate the erroneous metric"
+    },
+    {
+      "evidence_id": "ev-002-log-actual-errors",
+      "evidence_type": "log",
+      "source": "telemetry_storage",
+      "source_reference": "user-service-access-logs",
+      "event_time": "2024-01-30T09:00:00Z",
+      "collection_time": "2024-01-30T09:10:00Z",
+      "service_id": "svc-004-user",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Actual access logs show 5xx count unchanged: ~50/min (normal baseline)",
+      "query_reference": "SELECT count(*) FROM access_logs WHERE service='user-service' AND status >= 500",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate actual access logs showing normal error rate"
+    },
+    {
+      "evidence_id": "ev-003-deployment-instrumentation",
+      "evidence_type": "deployment",
+      "source": "ci_system",
+      "source_reference": "deployment-id=deploy-800",
+      "event_time": "2024-01-30T08:45:00Z",
+      "collection_time": "2024-01-30T09:10:00Z",
+      "service_id": "svc-004-user",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Deployment deploy-800 rolled out user-service v3.1.0 with new metrics instrumentation",
+      "query_reference": "GET /api/v1/deployments/deploy-800",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create deployment with instrumentation changes"
+    },
+    {
+      "evidence_id": "ev-004-commit-instrumentation-bug",
+      "evidence_type": "commit",
+      "source": "git_provider",
+      "source_reference": "commit=jkl555mno666",
+      "event_time": "2024-01-29T16:00:00Z",
+      "collection_time": "2024-01-30T09:10:00Z",
+      "service_id": "svc-004-user",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Commit changed metrics middleware: error counter incremented twice (once in middleware, once in handler)",
+      "query_reference": "GET /api/v1/repos/user-service/commits/jkl555mno666",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create commit showing double increment bug"
+    },
+    {
+      "evidence_id": "ev-005-trace-normal",
+      "evidence_type": "trace",
+      "source": "telemetry_storage",
+      "source_reference": "trace_id=user-normal-001",
+      "event_time": "2024-01-30T09:02:00Z",
+      "collection_time": "2024-01-30T09:10:00Z",
+      "time_window_start": "2024-01-30T09:02:00Z",
+      "time_window_end": "2024-01-30T09:02:10Z",
+      "service_id": "svc-004-user",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Traces show normal request flow with 200 OK responses; no actual 5xx errors",
+      "query_reference": "GET /api/v1/traces/user-normal-001",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate traces showing normal responses"
+    }
+  ],
+  "changes": [
+    {
+      "change_id": "chg-001-deploy-instrumentation",
+      "change_type": "deployment",
+      "timestamp": "2024-01-30T08:45:00Z",
+      "service_id": "svc-004-user",
+      "summary": "Deployed user-service v3.1.0 with double-increment metrics bug",
+      "commit_sha": "jkl555mno666",
+      "deployed_by": "ci-bot"
+    }
+  ],
+  "ground_truth": {
+    "root_cause_type": "insufficient_evidence",
+    "primary_service_id": "svc-004-user",
+    "trigger_change_id": "chg-001-deploy-instrumentation",
+    "causal_chain": [
+      {
+        "from_type": "trigger",
+        "from_description": "Deployment introduced double-increment in error counter",
+        "to_type": "mechanism",
+        "to_description": "Each actual error increments counter twice; metric shows 2x real error rate",
+        "evidence_ids": ["ev-003-deployment-instrumentation", "ev-004-commit-instrumentation-bug"],
+        "confidence": 0.95
+      },
+      {
+        "from_type": "mechanism",
+        "from_description": "Metric shows 8% error rate (2x actual ~4% which is still elevated but not alerting threshold)",
+        "to_type": "symptom",
+        "to_description": "Alert fires for >5% but actual errors normal",
+        "evidence_ids": ["ev-001-metric-5xx-spike", "ev-002-log-actual-errors", "ev-005-trace-normal"],
+        "confidence": 0.9
+      }
+    ],
+    "ambiguity_note": "",
+    "insufficient_evidence_note": "The evidence shows the METRIC is wrong, not that there's a real error spike. However, we cannot be 100% certain there isn't ALSO a real issue masked by the metric bug. The actual logs and traces show normal behavior, but we only sampled a subset. A proper diagnosis: 'Metric instrumentation bug confirmed (double increment). Actual error rate appears normal based on log/trace sampling. Recommend fixing instrumentation and re-evaluating. Confidence: 0.9 that this is a false positive alert.'",
+    "contributing_factors": ["No metric validation in CI", "Instrumentation change not reviewed for correctness", "Alert on derived metric without ground truth validation"]
+  },
+  "expected_diagnosis": {
+    "root_cause_type_match": false,
+    "service_localization_match": true,
+    "change_attribution_match": true,
+    "min_confidence": 0.85,
+    "must_include_evidence_ids": ["ev-001-metric-5xx-spike", "ev-002-log-actual-errors", "ev-004-commit-instrumentation-bug"],
+    "must_not_claim": ["Real 5xx spike occurring", "User service is actually failing"]
+  },
+  "misleading_or_confounding_signals": [
+    "Dashboard shows clear spike (but metric is wrong)",
+    "Alert fired (but based on faulty metric)",
+    "Recent deployment (but it's instrumentation, not functional code)"
+  ],
+  "acceptable_alternatives": [
+    {
+      "description": "Metric bug confirmed; no real incident (false positive)",
+      "evidence_ids": ["ev-001-metric-5xx-spike", "ev-002-log-actual-errors", "ev-004-commit-instrumentation-bug", "ev-005-trace-normal"],
+      "confidence_range": [0.85, 0.95]
+    },
+    {
+      "description": "Metric bug + real issue masked (less likely)",
+      "evidence_ids": ["ev-001-metric-5xx-spike", "ev-002-log-actual-errors"],
+      "confidence_range": [0.05, 0.15]
+    }
+  ],
+  "required_checks": [
+    {
+      "check_id": "chk-001-compare-metric-vs-logs",
+      "description": "Compare metric-derived error rate vs actual log count",
+      "tool": "query_logs",
+      "expected_outcome": "Logs show ~50 5xx/min; metric shows ~100 5xx/min (2x)",
+      "critical": true
+    },
+    {
+      "check_id": "chk-002-inspect-instrumentation",
+      "description": "Review metrics middleware code for double increment",
+      "tool": "get_commit",
+      "expected_outcome": "Counter incremented in both middleware and handler",
+      "critical": true
+    }
+  ],
+  "remediation_guidance": {
+    "suggestion": "Fix double-increment in metrics middleware; add metric validation tests; alert on log-derived error rate as backup",
+    "risk_level": "low",
+    "test_plan": [
+      "Fix instrumentation code",
+      "Unit test metric increments",
+      "Deploy and verify metric matches log count"
+    ],
+    "rollback_plan": "Rollback to user-service v3.0.5"
+  },
+  "tags": ["insufficient-evidence", "false-positive", "instrumentation-bug", "metric-error", "user-service"]
+}

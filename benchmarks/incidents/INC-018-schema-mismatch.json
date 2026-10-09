@@ -1,0 +1,232 @@
+{
+  "schema_version": "1.0.0",
+  "case_id": "INC-018",
+  "title": "API Schema/Contract Mismatch Between Services",
+  "category": "schema_mismatch",
+  "scenario_type": "single_cause",
+  "difficulty": "medium",
+  "description": "Order service updated its API to require a new required field 'shipping_address_id' in the POST /orders request. Checkout service was not updated and sends requests without this field, causing 400 errors. Contract test missed this because it only tested happy path.",
+  "environment": {
+    "name": "production",
+    "region": "us-east-1",
+    "cluster": "prod-cluster-1"
+  },
+  "incident_window": {
+    "start": "2024-02-01T10:00:00Z",
+    "end": "2024-02-01T10:30:00Z",
+    "investigation_cutoff": "2024-02-01T10:10:00Z"
+  },
+  "initial_symptoms": [
+    "Order creation failing with 400: 'shipping_address_id is required'",
+    "Checkout success rate dropped to 0%",
+    "Order service logs show validation errors",
+    "Recent deployment to order-service"
+  ],
+  "affected_services": [
+    {
+      "service_id": "svc-003-order",
+      "service_name": "order-service",
+      "impact": "primary"
+    },
+    {
+      "service_id": "svc-002-checkout",
+      "service_name": "checkout-service",
+      "impact": "upstream"
+    }
+  ],
+  "evidence_catalog": [
+    {
+      "evidence_id": "ev-001-metric-400-errors",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:http_400_rate{service=order-service,endpoint=/orders}[5m]",
+      "event_time": "2024-02-01T10:00:00Z",
+      "collection_time": "2024-02-01T10:10:00Z",
+      "time_window_start": "2024-02-01T10:00:00Z",
+      "time_window_end": "2024-02-01T10:10:00Z",
+      "service_id": "svc-003-order",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Order service /orders endpoint returning 400 errors at 100% rate since 10:00 UTC",
+      "query_reference": "SELECT count(*) FILTER (WHERE status=400) / count(*) FROM http_requests WHERE service='order-service' AND path='/orders'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate 400 error metrics"
+    },
+    {
+      "evidence_id": "ev-002-log-validation-error",
+      "evidence_type": "log",
+      "source": "telemetry_storage",
+      "source_reference": "order-service-logs",
+      "event_time": "2024-02-01T10:01:00Z",
+      "collection_time": "2024-02-01T10:10:00Z",
+      "service_id": "svc-003-order",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Order service logs: 'Validation failed: shipping_address_id is required'",
+      "query_reference": "SELECT * FROM logs WHERE service='order-service' AND message LIKE '%shipping_address_id%'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate validation error logs"
+    },
+    {
+      "evidence_id": "ev-003-deployment-order-v200",
+      "evidence_type": "deployment",
+      "source": "ci_system",
+      "source_reference": "deployment-id=deploy-801",
+      "event_time": "2024-02-01T09:50:00Z",
+      "collection_time": "2024-02-01T10:10:00Z",
+      "service_id": "svc-003-order",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Order-service v2.0.0 deployed at 09:50 UTC with new required field",
+      "query_reference": "GET /api/v1/deployments/deploy-801",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create order service deployment"
+    },
+    {
+      "evidence_id": "ev-004-commit-schema-change",
+      "evidence_type": "commit",
+      "source": "git_provider",
+      "source_reference": "commit=pqr777stu888",
+      "event_time": "2024-01-31T12:00:00Z",
+      "collection_time": "2024-02-01T10:10:00Z",
+      "service_id": "svc-003-order",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Commit added required shipping_address_id field to CreateOrderRequest schema",
+      "query_reference": "GET /api/v1/repos/order-service/commits/pqr777stu888",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create commit with schema change"
+    },
+    {
+      "evidence_id": "ev-005-checkout-payload",
+      "evidence_type": "trace",
+      "source": "telemetry_storage",
+      "source_reference": "trace_id=checkout-order-001",
+      "event_time": "2024-02-01T10:02:00Z",
+      "collection_time": "2024-02-01T10:10:00Z",
+      "time_window_start": "2024-02-01T10:02:00Z",
+      "time_window_end": "2024-02-01T10:02:05Z",
+      "service_id": "svc-002-checkout",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Trace shows checkout-service sending order request WITHOUT shipping_address_id",
+      "query_reference": "GET /api/v1/traces/checkout-order-001",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate trace showing missing field"
+    },
+    {
+      "evidence_id": "ev-006-contract-test-gap",
+      "evidence_type": "verification_result",
+      "source": "ci_system",
+      "source_reference": "contract-test:order-service-consumer",
+      "event_time": "2024-02-01T10:00:00Z",
+      "collection_time": "2024-02-01T10:10:00Z",
+      "service_id": "svc-002-checkout",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Contract test only validates happy path with all fields; missing required field not tested",
+      "query_reference": "GET /api/v1/contract-tests/order-service",
+      "data_provenance": "verification_result",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will simulate contract test report"
+    }
+  ],
+  "changes": [
+    {
+      "change_id": "chg-001-deploy-order-v200",
+      "change_type": "deployment",
+      "timestamp": "2024-02-01T09:50:00Z",
+      "service_id": "svc-003-order",
+      "summary": "Order-service v2.0.0 deployed with breaking API change",
+      "commit_sha": "pqr777stu888",
+      "deployed_by": "ci-bot"
+    }
+  ],
+  "ground_truth": {
+    "root_cause_type": "code_defect",
+    "primary_service_id": "svc-003-order",
+    "trigger_change_id": "chg-001-deploy-order-v200",
+    "causal_chain": [
+      {
+        "from_type": "trigger",
+        "from_description": "Order-service deployment added required field without backward compatibility",
+        "to_type": "mechanism",
+        "to_description": "New validation rejects requests missing shipping_address_id",
+        "evidence_ids": ["ev-003-deployment-order-v200", "ev-004-commit-schema-change"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "mechanism",
+        "from_description": "Checkout-service sends old payload without new field",
+        "to_type": "symptom",
+        "to_description": "All order creation requests return 400",
+        "evidence_ids": ["ev-001-metric-400-errors", "ev-002-log-validation-error", "ev-005-checkout-payload"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "symptom",
+        "from_description": "Checkout cannot create orders",
+        "to_type": "impact",
+        "to_description": "Complete checkout failure; revenue impact",
+        "evidence_ids": ["ev-001-metric-400-errors"],
+        "confidence": 1.0
+      }
+    ],
+    "ambiguity_note": "",
+    "insufficient_evidence_note": "",
+    "contributing_factors": ["Breaking API change without versioning", "Contract test gap (happy path only)", "No consumer-driven contract testing", "No backward compatibility period"]
+  },
+  "expected_diagnosis": {
+    "root_cause_type_match": true,
+    "service_localization_match": true,
+    "change_attribution_match": true,
+    "min_confidence": 0.95,
+    "must_include_evidence_ids": ["ev-001-metric-400-errors", "ev-002-log-validation-error", "ev-003-deployment-order-v200", "ev-005-checkout-payload"],
+    "must_not_claim": ["Database issue caused 400 errors", "Checkout service bug (it's sending old valid payload)"]
+  },
+  "misleading_or_confounding_signals": [
+    "Checkout service appears to be failing (but it's sending correct payload for old API)",
+    "Order service logs show validation errors (expected for breaking change)"
+  ],
+  "acceptable_alternatives": [],
+  "required_checks": [
+    {
+      "check_id": "chk-001-api-schema",
+      "description": "Check order-service API schema for required fields",
+      "tool": "get_api_schema",
+      "expected_outcome": "CreateOrderRequest requires shipping_address_id",
+      "critical": true
+    },
+    {
+      "check_id": "chk-002-checkout-payload",
+      "description": "Verify checkout-service request payload",
+      "tool": "get_trace",
+      "expected_outcome": "Request missing shipping_address_id",
+      "critical": true
+    },
+    {
+      "check_id": "chk-003-contract-test",
+      "description": "Review contract test coverage",
+      "tool": "get_contract_test",
+      "expected_outcome": "Contract test missing required field validation",
+      "critical": true
+    }
+  ],
+  "remediation_guidance": {
+    "suggestion": "Make shipping_address_id optional with default; or deploy checkout-service update first; implement consumer-driven contracts",
+    "risk_level": "medium",
+    "test_plan": [
+      "Make field optional in order-service (backward compatible)",
+      "Deploy order-service fix",
+      "Update checkout-service to send field",
+      "Add contract test for missing required fields"
+    ],
+    "rollback_plan": "Rollback order-service to v1.9.3"
+  },
+  "tags": ["schema-mismatch", "api-contract", "breaking-change", "order-service", "checkout-service"]
+}

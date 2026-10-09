@@ -1,0 +1,215 @@
+{
+  "schema_version": "1.0.0",
+  "case_id": "INC-003",
+  "title": "Slow Query Regression in User Service After Index Drop",
+  "category": "slow_query",
+  "scenario_type": "single_cause",
+  "difficulty": "medium",
+  "description": "A deployment accidentally dropped a critical index on the users.email column. Queries filtering by email (login, password reset) went from 5ms to 30s, causing cascade timeouts in auth-service.",
+  "environment": {
+    "name": "production",
+    "region": "us-east-1",
+    "cluster": "prod-cluster-1"
+  },
+  "incident_window": {
+    "start": "2024-01-17T09:00:00Z",
+    "end": "2024-01-17T10:00:00Z",
+    "investigation_cutoff": "2024-01-17T09:15:00Z"
+  },
+  "initial_symptoms": [
+    "Login requests timing out (30s)",
+    "Password reset emails not sending",
+    "User service CPU at 95%",
+    "Database slow query log explosion"
+  ],
+  "affected_services": [
+    {
+      "service_id": "svc-004-user",
+      "service_name": "user-service",
+      "impact": "primary"
+    },
+    {
+      "service_id": "svc-005-auth",
+      "service_name": "auth-service",
+      "impact": "downstream"
+    }
+  ],
+  "evidence_catalog": [
+    {
+      "evidence_id": "ev-001-metric-query-latency",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:db_query_duration{service=user-service,query=select_by_email}[5m]",
+      "event_time": "2024-01-17T09:00:00Z",
+      "collection_time": "2024-01-17T09:15:00Z",
+      "time_window_start": "2024-01-17T09:00:00Z",
+      "time_window_end": "2024-01-17T09:15:00Z",
+      "service_id": "svc-004-user",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Query latency for 'SELECT * FROM users WHERE email = ?' increased from p99 5ms to 30s",
+      "query_reference": "SELECT quantile(0.99)(db_query_duration_seconds) FROM db_queries WHERE query_name='select_by_email'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate query latency metrics showing regression"
+    },
+    {
+      "evidence_id": "ev-002-log-slow-query",
+      "evidence_type": "log",
+      "source": "telemetry_storage",
+      "source_reference": "postgres_slow_log",
+      "event_time": "2024-01-17T09:02:00Z",
+      "collection_time": "2024-01-17T09:15:00Z",
+      "service_id": "svc-004-user",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "PostgreSQL slow query log shows seq scan on users table for email filter (rows=2.5M, cost=150000)",
+      "query_reference": "SELECT * FROM pg_slow_log WHERE query LIKE '%email%' AND duration > 10000",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate PostgreSQL slow query log entries"
+    },
+    {
+      "evidence_id": "ev-003-deployment-migration",
+      "evidence_type": "deployment",
+      "source": "ci_system",
+      "source_reference": "deployment-id=deploy-791",
+      "event_time": "2024-01-17T08:45:00Z",
+      "collection_time": "2024-01-17T09:15:00Z",
+      "service_id": "svc-004-user",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Deployment deploy-791 ran database migration that dropped idx_users_email index",
+      "query_reference": "GET /api/v1/deployments/deploy-791",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create deployment with migration script"
+    },
+    {
+      "evidence_id": "ev-004-commit-migration",
+      "evidence_type": "commit",
+      "source": "git_provider",
+      "source_reference": "commit=mno345pqr678",
+      "event_time": "2024-01-16T14:00:00Z",
+      "collection_time": "2024-01-17T09:15:00Z",
+      "service_id": "svc-004-user",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Commit added migration to drop 'unused' idx_users_email index (mistakenly marked unused)",
+      "query_reference": "GET /api/v1/repos/user-service/commits/mno345pqr678",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create commit with migration SQL"
+    },
+    {
+      "evidence_id": "ev-005-baseline-query-perf",
+      "evidence_type": "baseline",
+      "source": "telemetry_storage",
+      "source_reference": "baseline:user-service-select_by_email-7d",
+      "event_time": "2024-01-17T09:00:00Z",
+      "collection_time": "2024-01-17T09:15:00Z",
+      "time_window_start": "2024-01-10T09:00:00Z",
+      "time_window_end": "2024-01-17T09:00:00Z",
+      "service_id": "svc-004-user",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "7-day baseline for select_by_email query: p50=3ms, p95=8ms, p99=12ms",
+      "query_reference": "SELECT * FROM query_baselines WHERE service='user-service' AND query='select_by_email'",
+      "data_provenance": "derived_calculation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will compute baseline from historical metrics"
+    }
+  ],
+  "changes": [
+    {
+      "change_id": "chg-001-deploy-migration-drop-index",
+      "change_type": "deployment",
+      "timestamp": "2024-01-17T08:45:00Z",
+      "service_id": "svc-004-user",
+      "summary": "Ran migration dropping idx_users_email index",
+      "commit_sha": "mno345pqr678",
+      "deployed_by": "ci-bot"
+    }
+  ],
+  "ground_truth": {
+    "root_cause_type": "code_defect",
+    "primary_service_id": "svc-004-user",
+    "trigger_change_id": "chg-001-deploy-migration-drop-index",
+    "causal_chain": [
+      {
+        "from_type": "trigger",
+        "from_description": "Migration dropped idx_users_email index during deployment",
+        "to_type": "mechanism",
+        "to_description": "Queries on users.email forced to sequential scan 2.5M rows",
+        "evidence_ids": ["ev-003-deployment-migration", "ev-004-commit-migration"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "mechanism",
+        "from_description": "Sequential scan takes 30s vs 5ms with index",
+        "to_type": "symptom",
+        "to_description": "Login and password reset queries timeout",
+        "evidence_ids": ["ev-001-metric-query-latency", "ev-002-log-slow-query"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "symptom",
+        "from_description": "Auth service calls to user-service timeout",
+        "to_type": "impact",
+        "to_description": "Users unable to login or reset passwords",
+        "evidence_ids": ["ev-005-baseline-query-perf"],
+        "confidence": 1.0
+      }
+    ],
+    "ambiguity_note": "",
+    "insufficient_evidence_note": "",
+    "contributing_factors": ["Index incorrectly marked as unused", "No migration review for index drops", "Missing query performance test in CI"]
+  },
+  "expected_diagnosis": {
+    "root_cause_type_match": true,
+    "service_localization_match": true,
+    "change_attribution_match": true,
+    "min_confidence": 0.9,
+    "must_include_evidence_ids": ["ev-001-metric-query-latency", "ev-002-log-slow-query", "ev-003-deployment-migration", "ev-004-commit-migration"],
+    "must_not_claim": ["Database hardware failure", "Network latency caused slow queries"]
+  },
+  "misleading_or_confounding_signals": [
+    "User service CPU high (symptom of seq scan, not cause)",
+    "Auth service errors (downstream, not root cause)"
+  ],
+  "acceptable_alternatives": [],
+  "required_checks": [
+    {
+      "check_id": "chk-001-explain-analyze",
+      "description": "Run EXPLAIN ANALYZE on affected query",
+      "tool": "query_database",
+      "expected_outcome": "Shows Seq Scan instead of Index Scan",
+      "critical": true
+    },
+    {
+      "check_id": "chk-002-check-indexes",
+      "description": "Verify idx_users_email exists",
+      "tool": "query_database",
+      "expected_outcome": "Index missing from pg_indexes",
+      "critical": true
+    },
+    {
+      "check_id": "chk-003-migration-review",
+      "description": "Check migration script for DROP INDEX",
+      "tool": "get_commit",
+      "expected_outcome": "Migration contains DROP INDEX idx_users_email",
+      "critical": true
+    }
+  ],
+  "remediation_guidance": {
+    "suggestion": "Recreate idx_users_email index on users.email column",
+    "risk_level": "low",
+    "test_plan": [
+      "Create index concurrently in staging",
+      "Verify query latency returns to baseline",
+      "Run login/password reset load test"
+    ],
+    "rollback_plan": "Index creation is additive; no rollback needed if issues arise"
+  },
+  "tags": ["slow-query", "index", "migration", "postgresql", "user-service"]
+}

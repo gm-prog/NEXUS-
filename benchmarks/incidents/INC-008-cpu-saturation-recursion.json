@@ -1,0 +1,203 @@
+{
+  "schema_version": "1.0.0",
+  "case_id": "INC-008",
+  "title": "CPU Saturation in Analytics Service Due to Unbounded Recursion",
+  "category": "cpu_saturation",
+  "scenario_type": "single_cause",
+  "difficulty": "medium",
+  "description": "A deployment introduced unbounded recursion in the analytics query builder for a specific edge case (deeply nested JSON filter). CPU spikes to 100% on all pods, causing request timeouts.",
+  "environment": {
+    "name": "production",
+    "region": "us-east-1",
+    "cluster": "prod-cluster-1"
+  },
+  "incident_window": {
+    "start": "2024-01-22T10:00:00Z",
+    "end": "2024-01-22T10:45:00Z",
+    "investigation_cutoff": "2024-01-22T10:15:00Z"
+  },
+  "initial_symptoms": [
+    "Analytics service CPU at 100% on all pods",
+    "Query latency p99: 200ms → 60s",
+    "Thread dumps show recursive call stack",
+    "Kubernetes HPA scaling up pods but not helping"
+  ],
+  "affected_services": [
+    {
+      "service_id": "svc-010-analytics",
+      "service_name": "analytics-service",
+      "impact": "primary"
+    }
+  ],
+  "evidence_catalog": [
+    {
+      "evidence_id": "ev-001-metric-cpu-100",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:container_cpu{service=analytics-service}[15m]",
+      "event_time": "2024-01-22T10:00:00Z",
+      "collection_time": "2024-01-22T10:15:00Z",
+      "time_window_start": "2024-01-22T10:00:00Z",
+      "time_window_end": "2024-01-22T10:15:00Z",
+      "service_id": "svc-010-analytics",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Analytics service CPU usage at 100% across all pods since 10:00 UTC",
+      "query_reference": "SELECT avg(container_cpu_percent) FROM container_metrics WHERE service='analytics-service'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate CPU saturation metrics"
+    },
+    {
+      "evidence_id": "ev-002-log-recursion",
+      "evidence_type": "log",
+      "source": "telemetry_storage",
+      "source_reference": "thread-dump:analytics-pod-1",
+      "event_time": "2024-01-22T10:05:00Z",
+      "collection_time": "2024-01-22T10:15:00Z",
+      "service_id": "svc-010-analytics",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Thread dump shows 200+ threads stuck in QueryBuilder.buildFilter() recursive calls (depth > 10000)",
+      "query_reference": "SELECT * FROM thread_dumps WHERE service='analytics-service' AND stack LIKE '%buildFilter%'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate thread dump showing deep recursion"
+    },
+    {
+      "evidence_id": "ev-003-deployment-analytics-v210",
+      "evidence_type": "deployment",
+      "source": "ci_system",
+      "source_reference": "deployment-id=deploy-793",
+      "event_time": "2024-01-22T09:45:00Z",
+      "collection_time": "2024-01-22T10:15:00Z",
+      "service_id": "svc-010-analytics",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Deployment deploy-793 rolled out analytics-service v2.1.0 with new filter parser",
+      "query_reference": "GET /api/v1/deployments/deploy-793",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create deployment record"
+    },
+    {
+      "evidence_id": "ev-004-commit-filter-parser",
+      "evidence_type": "commit",
+      "source": "git_provider",
+      "source_reference": "commit=efg345hij678",
+      "event_time": "2024-01-21T14:00:00Z",
+      "collection_time": "2024-01-22T10:15:00Z",
+      "service_id": "svc-010-analytics",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Commit introduced recursive filter parser without depth limit for nested AND/OR conditions",
+      "query_reference": "GET /api/v1/repos/analytics-service/commits/efg345hij678",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create commit with recursive function diff"
+    },
+    {
+      "evidence_id": "ev-005-trace-recursive",
+      "evidence_type": "trace",
+      "source": "telemetry_storage",
+      "source_reference": "trace_id=klm789",
+      "event_time": "2024-01-22T10:02:00Z",
+      "collection_time": "2024-01-22T10:15:00Z",
+      "time_window_start": "2024-01-22T10:02:00Z",
+      "time_window_end": "2024-01-22T10:02:30Z",
+      "service_id": "svc-010-analytics",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Trace shows single request consuming 30s CPU in QueryBuilder.buildFilter with nested filter",
+      "query_reference": "GET /api/v1/traces/klm789",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate trace with CPU-intensive span"
+    }
+  ],
+  "changes": [
+    {
+      "change_id": "chg-001-deploy-analytics-v210",
+      "change_type": "deployment",
+      "timestamp": "2024-01-22T09:45:00Z",
+      "service_id": "svc-010-analytics",
+      "summary": "Deployed analytics-service v2.1.0 with unbounded recursion in filter parser",
+      "commit_sha": "efg345hij678",
+      "deployed_by": "ci-bot"
+    }
+  ],
+  "ground_truth": {
+    "root_cause_type": "code_defect",
+    "primary_service_id": "svc-010-analytics",
+    "trigger_change_id": "chg-001-deploy-analytics-v210",
+    "causal_chain": [
+      {
+        "from_type": "trigger",
+        "from_description": "Deployment v2.1.0 introduced unbounded recursion in filter parser",
+        "to_type": "mechanism",
+        "to_description": "Deeply nested JSON filter causes infinite recursion in QueryBuilder.buildFilter",
+        "evidence_ids": ["ev-003-deployment-analytics-v210", "ev-004-commit-filter-parser"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "mechanism",
+        "from_description": "Recursive calls consume all CPU threads",
+        "to_type": "symptom",
+        "to_description": "CPU at 100%, query latency spikes to 60s",
+        "evidence_ids": ["ev-001-metric-cpu-100", "ev-002-log-recursion", "ev-005-trace-recursive"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "symptom",
+        "from_description": "All pods CPU saturated, HPA scales but new pods also hit recursion",
+        "to_type": "impact",
+        "to_description": "Analytics queries unavailable; dashboards and reports failing",
+        "evidence_ids": ["ev-001-metric-cpu-100"],
+        "confidence": 1.0
+      }
+    ],
+    "ambiguity_note": "",
+    "insufficient_evidence_note": "",
+    "contributing_factors": ["No recursion depth limit", "No CPU profiling in CI", "Edge case not covered by tests"]
+  },
+  "expected_diagnosis": {
+    "root_cause_type_match": true,
+    "service_localization_match": true,
+    "change_attribution_match": true,
+    "min_confidence": 0.9,
+    "must_include_evidence_ids": ["ev-001-metric-cpu-100", "ev-002-log-recursion", "ev-004-commit-filter-parser"],
+    "must_not_claim": ["Database query causing CPU", "External API calls causing CPU"]
+  },
+  "misleading_or_confounding_signals": [
+    "HPA scaling up pods (reactive, not helpful)",
+    "Database also shows high CPU (downstream effect of slow analytics queries)"
+  ],
+  "acceptable_alternatives": [],
+  "required_checks": [
+    {
+      "check_id": "chk-001-thread-dump",
+      "description": "Analyze thread dump for recursive stack",
+      "tool": "get_thread_dump",
+      "expected_outcome": "Stack shows QueryBuilder.buildFilter recursion depth > 1000",
+      "critical": true
+    },
+    {
+      "check_id": "chk-002-code-review",
+      "description": "Review filter parser for recursion depth limit",
+      "tool": "get_commit",
+      "expected_outcome": "Recursive function without base case / depth limit",
+      "critical": true
+    }
+  ],
+  "remediation_guidance": {
+    "suggestion": "Add recursion depth limit (max 100) to filter parser; add circuit breaker for query complexity",
+    "risk_level": "low",
+    "test_plan": [
+      "Add unit test for deeply nested filter",
+      "Add integration test with max depth filter",
+      "Fuzz test filter parser with random nested structures"
+    ],
+    "rollback_plan": "Rollback to analytics-service v2.0.5"
+  },
+  "tags": ["cpu-saturation", "recursion", "analytics-service", "infinite-loop"]
+}

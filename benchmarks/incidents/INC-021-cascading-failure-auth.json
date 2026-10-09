@@ -1,0 +1,240 @@
+{
+  "schema_version": "1.0.0",
+  "case_id": "INC-021",
+  "title": "Cascading Failure: Auth Service Outage Takes Down Entire Platform",
+  "category": "cascading_failure",
+  "scenario_type": "multi_factor",
+  "difficulty": "expert",
+  "description": "Auth service database experienced disk failure. Auth service became unavailable. All other services (payment, checkout, order, user) depend on auth for token validation. Without circuit breakers, all services exhausted their thread pools waiting for auth timeouts, causing platform-wide outage.",
+  "environment": {
+    "name": "production",
+    "region": "us-east-1",
+    "cluster": "prod-cluster-1"
+  },
+  "incident_window": {
+    "start": "2024-02-04T08:00:00Z",
+    "end": "2024-02-04T09:30:00Z",
+    "investigation_cutoff": "2024-02-04T08:15:00Z"
+  },
+  "initial_symptoms": [
+    "All services returning 500/503",
+    "Auth service completely unavailable (DB disk failure)",
+    "Thread pools exhausted in payment, checkout, order, user services",
+    "No circuit breakers on auth calls"
+  ],
+  "affected_services": [
+    {
+      "service_id": "svc-005-auth",
+      "service_name": "auth-service",
+      "impact": "primary"
+    },
+    {
+      "service_id": "svc-001-payment",
+      "service_name": "payment-service",
+      "impact": "downstream"
+    },
+    {
+      "service_id": "svc-002-checkout",
+      "service_name": "checkout-service",
+      "impact": "downstream"
+    },
+    {
+      "service_id": "svc-003-order",
+      "service_name": "order-service",
+      "impact": "downstream"
+    },
+    {
+      "service_id": "svc-004-user",
+      "service_name": "user-service",
+      "impact": "downstream"
+    }
+  ],
+  "evidence_catalog": [
+    {
+      "evidence_id": "ev-001-metric-auth-down",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:service_availability{service=auth-service}[5m]",
+      "event_time": "2024-02-04T08:00:00Z",
+      "collection_time": "2024-02-04T08:15:00Z",
+      "time_window_start": "2024-02-04T08:00:00Z",
+      "time_window_end": "2024-02-04T08:15:00Z",
+      "service_id": "svc-005-auth",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Auth service availability dropped to 0% at 08:00 UTC",
+      "query_reference": "SELECT availability FROM service_health WHERE service='auth-service'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate auth service availability metric"
+    },
+    {
+      "evidence_id": "ev-002-log-db-disk-failure",
+      "evidence_type": "log",
+      "source": "telemetry_storage",
+      "source_reference": "auth-db-logs",
+      "event_time": "2024-02-04T07:58:00Z",
+      "collection_time": "2024-02-04T08:15:00Z",
+      "service_id": "svc-005-auth",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Auth DB logs: 'PANIC: could not write to file: No space left on device' (disk failure)",
+      "query_reference": "SELECT * FROM db_logs WHERE service='auth-service' AND message LIKE '%No space left%'",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate DB disk failure logs"
+    },
+    {
+      "evidence_id": "ev-003-metric-thread-pool-exhaustion",
+      "evidence_type": "metric",
+      "source": "telemetry_storage",
+      "source_reference": "query:thread_pool_usage{service=payment-service,checkout-service,order-service,user-service}[5m]",
+      "event_time": "2024-02-04T08:00:30Z",
+      "collection_time": "2024-02-04T08:15:00Z",
+      "time_window_start": "2024-02-04T08:00:30Z",
+      "time_window_end": "2024-02-04T08:15:00Z",
+      "service_id": "svc-001-payment",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Thread pool usage at 100% for all downstream services within 30s of auth outage",
+      "query_reference": "SELECT thread_pool_used / thread_pool_max FROM thread_metrics WHERE service IN ('payment-service','checkout-service','order-service','user-service')",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate thread pool metrics for multiple services"
+    },
+    {
+      "evidence_id": "ev-004-trace-auth-timeout",
+      "evidence_type": "trace",
+      "source": "telemetry_storage",
+      "source_reference": "trace_id=cascade-001",
+      "event_time": "2024-02-04T08:01:00Z",
+      "collection_time": "2024-02-04T08:15:00Z",
+      "time_window_start": "2024-02-04T08:01:00Z",
+      "time_window_end": "2024-02-04T08:01:30Z",
+      "service_id": "svc-001-payment",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Trace shows payment-service calling auth-service validateToken, waiting 30s (timeout), then returning 500",
+      "query_reference": "GET /api/v1/traces/cascade-001",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will generate trace showing auth timeout cascade"
+    },
+    {
+      "evidence_id": "ev-005-no-circuit-breakers",
+      "evidence_type": "configuration",
+      "source": "application_state",
+      "source_reference": "config:circuit-breakers.auth-service=enabled:false",
+      "event_time": "2024-02-04T08:00:00Z",
+      "collection_time": "2024-02-04T08:15:00Z",
+      "service_id": "svc-001-payment",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "No circuit breakers configured for auth-service calls in any downstream service",
+      "query_reference": "GET /api/v1/config/circuit-breakers",
+      "data_provenance": "direct_observation",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will create circuit breaker config showing disabled"
+    },
+    {
+      "evidence_id": "ev-006-auth-db-disk",
+      "evidence_type": "verification_result",
+      "source": "telemetry_storage",
+      "source_reference": "disk-check:auth-db-primary",
+      "event_time": "2024-02-04T08:10:00Z",
+      "collection_time": "2024-02-04T08:15:00Z",
+      "service_id": "svc-005-auth",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Auth DB primary disk: 0 bytes free; RAID controller shows degraded array",
+      "query_reference": "df -h /var/lib/postgresql && megacli -PDList -aAll",
+      "data_provenance": "verification_result",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Phase 1/2 will simulate disk check results"
+    }
+  ],
+  "changes": [],
+  "ground_truth": {
+    "root_cause_type": "dependency_failure",
+    "primary_service_id": "svc-005-auth",
+    "trigger_change_id": "",
+    "causal_chain": [
+      {
+        "from_type": "trigger",
+        "from_description": "Auth service database disk failure (hardware)",
+        "to_type": "mechanism",
+        "to_description": "Auth service completely unavailable; all token validation calls timeout",
+        "evidence_ids": ["ev-001-metric-auth-down", "ev-002-log-db-disk-failure", "ev-006-auth-db-disk"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "mechanism",
+        "from_description": "No circuit breakers → all downstream services wait for auth timeout (30s)",
+        "to_type": "symptom",
+        "to_description": "Thread pools exhausted in payment, checkout, order, user services",
+        "evidence_ids": ["ev-003-metric-thread-pool-exhaustion", "ev-004-trace-auth-timeout", "ev-005-no-circuit-breakers"],
+        "confidence": 1.0
+      },
+      {
+        "from_type": "symptom",
+        "from_description": "All services thread pools exhausted, cannot process any requests",
+        "to_type": "impact",
+        "to_description": "Platform-wide outage; all services returning 500/503",
+        "evidence_ids": ["ev-003-metric-thread-pool-exhaustion"],
+        "confidence": 1.0
+      }
+    ],
+    "ambiguity_note": "",
+    "insufficient_evidence_note": "",
+    "contributing_factors": ["No circuit breakers on critical dependency", "Single auth service (no fallback)", "Thread pool sizing not accounting for dependency failure", "No disk monitoring/alerting on auth DB", "No graceful degradation for auth unavailability"]
+  },
+  "expected_diagnosis": {
+    "root_cause_type_match": true,
+    "service_localization_match": true,
+    "change_attribution_match": false,
+    "min_confidence": 0.9,
+    "must_include_evidence_ids": ["ev-001-metric-auth-down", "ev-002-log-db-disk-failure", "ev-003-metric-thread-pool-exhaustion", "ev-005-no-circuit-breakers"],
+    "must_not_claim": ["Individual service deployments caused outage", "Network partition caused cascade"]
+  },
+  "misleading_or_confounding_signals": [
+    "All services failing simultaneously (looks like platform issue, but root is auth)",
+    "Thread pool exhaustion in multiple services (symptom, not cause)",
+    "No recent deployments (hardware failure)"
+  ],
+  "acceptable_alternatives": [],
+  "required_checks": [
+    {
+      "check_id": "chk-001-auth-health",
+      "description": "Verify auth service health independently",
+      "tool": "get_dependency_status",
+      "expected_outcome": "Auth service 0% availability; DB disk full",
+      "critical": true
+    },
+    {
+      "check_id": "chk-002-circuit-breakers",
+      "description": "Check circuit breaker configuration for auth calls",
+      "tool": "get_config",
+      "expected_outcome": "No circuit breakers enabled for auth-service",
+      "critical": true
+    },
+    {
+      "check_id": "chk-003-thread-pools",
+      "description": "Verify thread pool exhaustion across services",
+      "tool": "query_metrics",
+      "expected_outcome": "All downstream services at 100% thread pool usage",
+      "critical": true
+    }
+  ],
+  "remediation_guidance": {
+    "suggestion": "Add circuit breakers on auth calls with fast-fail; implement auth token caching with TTL; add read-only auth fallback; monitor DB disk space",
+    "risk_level": "high",
+    "test_plan": [
+      "Add circuit breakers for auth-service in all consumers",
+      "Implement cached token validation (short TTL)",
+      "Set up read replica for auth DB",
+      "Add disk space alerting"
+    ],
+    "rollback_plan": "Circuit breaker config change only; no code rollback needed"
+  },
+  "tags": ["cascading-failure", "auth-service", "circuit-breaker", "disk-failure", "platform-outage", "multi-factor"]
+}
