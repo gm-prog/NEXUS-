@@ -32,9 +32,12 @@ versus latent-defect target mismatch. Some malformed/precision cases also
 remained unchecked. This final correction supersedes those conclusions; none
 of that history was rewritten.
 
-Final corrective-code SHA and hosted evidence are recorded in section 8 after
-pushing and inspecting the new run. Evidence rows are immutable snapshots of
-verified commits, not a claim that an earlier head's run validates a later tip.
+Corrective-code commit: `17a96c35a91ad70c2fe22f1a1883d8c9eb94eaef`.
+Its fresh hosted run is verified in section 8. This report is an immutable
+snapshot of that verified commit. A follow-up report-only commit necessarily
+advances the PR tip; it must receive its own independently inspected run rather
+than inheriting this conclusion. The final response records that tip/run, and
+[PR #1 checks](https://github.com/gm-prog/NEXUS-/pull/1/checks) show live status.
 
 ## 3. Findings → Concrete Fixes
 
@@ -204,9 +207,28 @@ rfc3339-validator 0.1.4, click 8.5.0, build 1.6.1. These are observed versions,
 
 ## 8. Hosted Validation (Independent Evidence)
 
-Fresh hosted validation for the final corrective code is **pending push/run** at
-this point in the evidence snapshot. No result is inferred from earlier heads.
-This section will be replaced only after the new SHA's run/jobs are inspected.
+**Fresh run:** [38049278138](https://github.com/gm-prog/NEXUS-/actions/runs/38049278138)
+
+**Exact head SHA:** `17a96c35a91ad70c2fe22f1a1883d8c9eb94eaef`
+
+**Event:** `pull_request`, branch `arena/eba8dba5-nexus`, target `master`.
+This is PR validation, not a claim that changes have been pushed/merged to master.
+
+**Created:** `2026-10-10T11:41:06Z`. **Status:** completed.
+**Actual conclusion:** success, inspected with `gh run view` and the jobs API.
+No result was inferred from a previous SHA's run.
+
+| Job | Actual job URL | Actual conclusion |
+|-----|----------------|-------------------|
+| Validate (Python 3.11) | [114204960343](https://github.com/gm-prog/NEXUS-/actions/runs/38049278138/job/114204960343) | success |
+| Validate (Python 3.12) | [114204960174](https://github.com/gm-prog/NEXUS-/actions/runs/38049278138/job/114204960174) | success |
+| Wheel smoke test | [114204960290](https://github.com/gm-prog/NEXUS-/actions/runs/38049278138/job/114204960290) | success |
+
+Both Validate jobs report success for install, formatting, lint, pytest,
+installed CLI help/list/validate and cleanup. The wheel job reports success
+for build and the clean installed-wheel smoke check. `gh pr checks 1` independently
+reported all three passing. These are observed step conclusions, not locally
+executed Python 3.12 tests or a claim to have read unavailable redirected logs.
 
 Historical runs, not used as proof of the final correction:
 
@@ -222,10 +244,12 @@ were read, and both `action.yml` files declare `node24`. Unsafe-PR checkout
 guards do not affect our `pull_request` event; removed `pip-install` input was
 not used. Triggers, read-only permissions and validation jobs are preserved.
 
-Intermediate node24 run annotations contained the notice that `ubuntu-latest`
-will migrate to Ubuntu 26 from **2026-10-19**, not a Node 20 warning. Fresh final
-run annotations will be checked separately. This is not a claim of warning-free
-CI. Full log downloads redirect to a host unavailable in this sandbox; hosted
+All three **fresh** run 38049278138 annotation responses were inspected via
+`GET /repos/gm-prog/NEXUS-/check-runs/{job-id}/annotations`. Each contains only
+the notice that `ubuntu-latest` will migrate to Ubuntu 26 from **2026-10-19**;
+none contains a Node 20 deprecation warning. This is not a claim of warning-free
+CI: the runner-image notice remains, with the dated maintainer follow-up below.
+Full log downloads redirect to a host unavailable in this sandbox; hosted
 claims rely on accessible run/job/step conclusions and annotation API responses,
 not a claim that the full redirected logs were read.
 
