@@ -5,6 +5,28 @@
   "description": "Specification for a synthetic incident scenario used in benchmark evaluation. Contains both agent-visible evidence catalog and evaluator-only ground truth.",
   "type": "object",
   "additionalProperties": false,
+  "$defs": {
+    "service_id": {
+      "type": "string",
+      "pattern": "^svc-[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "description": "Stable, human-readable service slug (e.g. svc-001-payment). Deliberately NOT a UUID: identifiers must stay legible in evidence, runbooks and review output."
+    },
+    "environment_id": {
+      "type": "string",
+      "pattern": "^env-[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "description": "Stable, human-readable environment slug (e.g. env-prod-us-east-1)."
+    },
+    "execution_class": {
+      "type": "string",
+      "enum": ["read_only", "staging_experiment", "human_approval_required"],
+      "description": "Safety classification of the verification step. read_only = observation only; staging_experiment = mutating controlled experiment restricted to non-production; human_approval_required = mutating action that needs an explicit human authorization before it may run anywhere."
+    },
+    "target_environment": {
+      "type": "string",
+      "enum": ["production", "staging", "sandbox", "not_applicable"],
+      "description": "Environment the proposed step would act on. No mutating step may be autonomous in any environment; staging experiments are limited to staging/sandbox."
+    }
+  },
   "required": [
     "schema_version",
     "case_id",
@@ -105,9 +127,9 @@
       "additionalProperties": false,
       "required": ["start", "end", "investigation_cutoff"],
       "properties": {
-        "start": { "type": "string", "format": "date-time", "description": "When symptoms first appeared (UTC)" },
-        "end": { "type": "string", "format": "date-time", "description": "When incident was resolved or observation ended (UTC)" },
-        "investigation_cutoff": { "type": "string", "format": "date-time", "description": "Time when investigation begins; evidence after this is not visible to agent (UTC)" }
+        "start": { "type": "string", "format": "date-time", "description": "When symptoms first appeared; timezone-aware RFC 3339, at or before investigation_cutoff." },
+        "end": { "type": "string", "format": "date-time", "description": "Evaluator-only: when the incident was resolved or observation ended. Never included in the agent-visible projection, even if at or before the cutoff." },
+        "investigation_cutoff": { "type": "string", "format": "date-time", "description": "Frozen investigation boundary (timezone-aware RFC 3339). Every projected evidence event/collection/window time and change timestamp must be at or before this instant." }
       }
     },
     "initial_symptoms": {
@@ -124,7 +146,7 @@
         "additionalProperties": false,
         "required": ["service_id", "service_name", "impact"],
         "properties": {
-          "service_id": { "type": "string", "format": "uuid" },
+          "service_id": { "$ref": "#/$defs/service_id" },
           "service_name": { "type": "string" },
           "impact": { "type": "string", "enum": ["primary", "secondary", "downstream", "upstream"] }
         }
@@ -137,17 +159,21 @@
         "type": "object",
         "additionalProperties": false,
         "required": ["evidence_id", "evidence_type", "source", "source_reference", "event_time", "collection_time", "service_id", "environment_id", "summary", "data_provenance", "integrity_status", "availability_status"],
+        "dependentRequired": {
+          "time_window_start": ["time_window_end"],
+          "time_window_end": ["time_window_start"]
+        },
         "properties": {
           "evidence_id": { "type": "string", "pattern": "^ev-[a-z0-9-]+$" },
           "evidence_type": { "type": "string", "enum": ["metric", "log", "trace", "deployment", "commit", "runbook", "historical_incident", "configuration", "dependency_status", "baseline", "verification_result"] },
           "source": { "type": "string", "enum": ["telemetry_storage", "application_state", "git_provider", "ci_system", "runbook_store", "manual"] },
           "source_reference": { "type": "string", "description": "Query ID, trace ID, commit SHA, URL, runbook ID, etc." },
-          "event_time": { "type": "string", "format": "date-time", "description": "When the observation occurred (UTC)" },
-          "collection_time": { "type": "string", "format": "date-time", "description": "When evidence was retrieved/recorded (UTC)" },
+          "event_time": { "type": "string", "format": "date-time", "description": "Timezone-aware RFC 3339 event time; must be at or before investigation_cutoff." },
+          "collection_time": { "type": "string", "format": "date-time", "description": "Timezone-aware RFC 3339 availability time; must be at or before investigation_cutoff, not just the event time." },
           "time_window_start": { "type": "string", "format": "date-time" },
           "time_window_end": { "type": "string", "format": "date-time" },
-          "service_id": { "type": "string", "format": "uuid" },
-          "environment_id": { "type": "string", "format": "uuid" },
+          "service_id": { "$ref": "#/$defs/service_id" },
+          "environment_id": { "$ref": "#/$defs/environment_id" },
           "summary": { "type": "string", "description": "Human-readable summary of the evidence" },
           "query_reference": { "type": "string", "description": "How to reproduce retrieval (SQL, API call, etc.)" },
           "data_provenance": { "type": "string", "enum": ["direct_observation", "derived_calculation", "model_inference", "manual_entry", "verification_result"] },
@@ -157,7 +183,7 @@
           "synthetic_fixture_note": { "type": "string", "description": "For Phase 0: describes what fixture data Phase 1/2 will need to generate" }
         }
       },
-      "description": "Agent-visible evidence specifications. No ground truth fields."
+      "description": "Agent-visible evidence specifications, excluding synthetic_fixture_note. Future-dated or malformed timestamps are rejected, not filtered; optional windows require both endpoints in chronological order and no endpoint after investigation_cutoff. No ground truth fields."
     },
     "changes": {
       "type": "array",
@@ -169,14 +195,14 @@
           "change_id": { "type": "string", "pattern": "^chg-[a-z0-9-]+$" },
           "change_type": { "type": "string", "enum": ["deployment", "config_change", "feature_flag", "dependency_update", "infrastructure"] },
           "timestamp": { "type": "string", "format": "date-time" },
-          "service_id": { "type": "string", "format": "uuid" },
+          "service_id": { "$ref": "#/$defs/service_id" },
           "summary": { "type": "string" },
           "details": { "type": "object" },
           "commit_sha": { "type": "string" },
           "deployed_by": { "type": "string" }
         }
       },
-      "description": "Deployment/commit context relevant to the incident"
+      "description": "Agent-visible deployment/commit context; every timestamp must be at or before investigation_cutoff. Free-form details and prose require fixture-author review for temporal/answer leakage."
     },
     "ground_truth": {
       "type": "object",
@@ -184,7 +210,7 @@
       "required": ["root_cause_type", "ambiguity_note", "insufficient_evidence_note"],
       "properties": {
         "root_cause_type": { "type": "string", "enum": ["code_defect", "config_error", "dependency_failure", "resource_exhaustion", "capacity_limit", "design_flaw", "unknown", "ambiguous", "insufficient_evidence"] },
-        "primary_service_id": { "type": "string", "format": "uuid" },
+        "primary_service_id": { "$ref": "#/$defs/service_id" },
         "trigger_change_id": { "type": "string", "pattern": "^(chg-[a-z0-9-]+)?$" },
         "causal_chain": {
           "type": "array",
@@ -245,16 +271,85 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["check_id", "description", "tool", "expected_outcome"],
+        "required": [
+          "check_id",
+          "description",
+          "tool",
+          "expected_outcome",
+          "execution_class",
+          "target_environment",
+          "mutates_state",
+          "automated_execution_allowed"
+        ],
         "properties": {
           "check_id": { "type": "string", "pattern": "^chk-[a-z0-9-]+$" },
           "description": { "type": "string" },
-          "tool": { "type": "string" },
+          "tool": { "type": "string", "minLength": 1, "description": "Must be explicitly registered in execution_policy.TOOL_REGISTRY with its side-effect class; unknown names fail closed." },
           "expected_outcome": { "type": "string" },
+          "execution_class": { "$ref": "#/$defs/execution_class" },
+          "target_environment": { "$ref": "#/$defs/target_environment" },
+          "mutates_state": {
+            "type": "boolean",
+            "description": "True if performing this step changes the state of the target environment (config, data, traffic, process lifecycle)."
+          },
+          "automated_execution_allowed": {
+            "type": "boolean",
+            "description": "True only if an autonomous agent may perform this step without a human gate. Must be false for every mutating step."
+          },
           "critical": { "type": "boolean", "default": false }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": ["execution_class"],
+              "properties": { "execution_class": { "const": "read_only" } }
+            },
+            "then": {
+              "properties": {
+                "mutates_state": { "const": false },
+                "automated_execution_allowed": { "const": true }
+              }
+            }
+          },
+          {
+            "if": {
+              "required": ["execution_class"],
+              "properties": { "execution_class": { "const": "staging_experiment" } }
+            },
+            "then": {
+              "properties": {
+                "mutates_state": { "const": true },
+                "automated_execution_allowed": { "const": false },
+                "target_environment": { "enum": ["staging", "sandbox"] }
+              }
+            }
+          },
+          {
+            "if": {
+              "required": ["execution_class"],
+              "properties": { "execution_class": { "const": "human_approval_required" } }
+            },
+            "then": {
+              "properties": {
+                "mutates_state": { "const": true },
+                "automated_execution_allowed": { "const": false }
+              }
+            }
+          },
+          {
+            "if": {
+              "required": ["automated_execution_allowed"],
+              "properties": { "automated_execution_allowed": { "const": true } }
+            },
+            "then": {
+              "properties": {
+                "mutates_state": { "const": false }
+              }
+            }
+          }
+        ]
       },
-      "description": "Verification actions expected of a thorough investigation"
+      "description": "Verification actions expected of a thorough investigation. Every step declares an execution class: early investigation steps must be read_only, mutating steps are staging/labelled experiments or human-approval-gated and may never be executed automatically against production. The mapping from tool name to permitted execution classes is enforced by the validator (see src/nexus_benchmarks/execution_policy.py)."
     },
     "remediation_guidance": {
       "type": "object",

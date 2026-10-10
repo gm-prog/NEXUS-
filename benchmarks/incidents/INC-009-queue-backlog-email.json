@@ -179,6 +179,10 @@
       "description": "Inspect queue for repeated message IDs",
       "tool": "inspect_queue",
       "expected_outcome": "Same message IDs retrying with template error",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
@@ -186,6 +190,10 @@
       "description": "Check template for undefined variables",
       "tool": "get_commit",
       "expected_outcome": "Template references user.referral_code not always present",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     }
   ],

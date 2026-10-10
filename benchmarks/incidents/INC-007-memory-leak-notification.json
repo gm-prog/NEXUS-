@@ -195,6 +195,10 @@
       "description": "Analyze memory growth pattern for sawtooth",
       "tool": "query_metrics",
       "expected_outcome": "Sawtooth pattern with regular restarts",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
@@ -202,6 +206,10 @@
       "description": "Check WebSocket connection count never decreases",
       "tool": "query_metrics",
       "expected_outcome": "Connections monotonically increase",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
@@ -209,6 +217,10 @@
       "description": "Review WebSocket handler for cleanup on disconnect",
       "tool": "get_commit",
       "expected_outcome": "Missing removal from connections map in onDisconnect",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     }
   ],

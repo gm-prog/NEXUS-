@@ -179,6 +179,10 @@
       "description": "Analyze thread dump for recursive stack",
       "tool": "get_thread_dump",
       "expected_outcome": "Stack shows QueryBuilder.buildFilter recursion depth > 1000",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
@@ -186,6 +190,10 @@
       "description": "Review filter parser for recursion depth limit",
       "tool": "get_commit",
       "expected_outcome": "Recursive function without base case / depth limit",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     }
   ],

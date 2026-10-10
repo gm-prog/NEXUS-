@@ -221,13 +221,21 @@
       "description": "Verify payment-service DB pool exhaustion timestamp",
       "tool": "query_logs",
       "expected_outcome": "Pool exhaustion at 11:00:10 (before both error spikes)",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
       "check_id": "chk-002-break-circular-dep",
-      "description": "Temporarily disable payment→order or order→payment calls to isolate",
+      "description": "PROPOSED CONTROLLED EXPERIMENT (not an investigation query): in the staging environment, replay the order->payment and payment->order call paths with one direction disabled at a time to isolate the origin of the pool exhaustion. Requires explicit human authorization; staging target only.",
       "tool": "toggle_feature_flag",
-      "expected_outcome": "Isolating one direction reveals true origin",
+      "expected_outcome": "Isolating one direction reveals the true origin of the exhaustion",
+      "execution_class": "staging_experiment",
+      "target_environment": "staging",
+      "mutates_state": true,
+      "automated_execution_allowed": false,
       "critical": true
     }
   ],

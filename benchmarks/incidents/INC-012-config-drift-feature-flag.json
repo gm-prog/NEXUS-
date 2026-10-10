@@ -178,6 +178,10 @@
       "description": "Check feature flag status per region",
       "tool": "get_config",
       "expected_outcome": "Flag false in eu-west-1, true in us-east-1",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
@@ -185,6 +189,10 @@
       "description": "Check config audit log for recent changes",
       "tool": "get_config_audit",
       "expected_outcome": "Manual change at 13:55 UTC by ops-engineer-1",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     }
   ],

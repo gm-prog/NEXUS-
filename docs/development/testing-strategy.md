@@ -19,31 +19,93 @@ NEXUS testing follows a layered approach aligned with the architecture:
 
 ## Phase 0 Testing (Implemented)
 
-### Schema Validation Tests
+### Schema Validation Tests (`tests/test_schema_validation.py`)
 - All committed incident fixtures validate against `incident-case.schema.json`
 - Evaluation result schema validates against `evaluation-result.schema.json`
-- Malformed JSON reported clearly
+- Malformed JSON reported clearly (`CaseLoadError` / `SchemaLoadError`)
 - Missing required properties fail
 - Unknown properties fail where `additionalProperties: false`
-- Unsupported schema versions fail
+- Unsupported schema versions fail; mixed versions reported separately
 - Duplicate case IDs fail
 - Filename/case_id agreement enforced
 - Insufficient scenario count fails
-- Insufficient ambiguity coverage fails
+- The declared identifier contract is slug-based, not UUID-based
+- Every fixture identifier is a slug
+- **The validator really enables `jsonschema.FormatChecker`** (`date-time` and
+  `uuid` checkers present)
+- Malformed `date-time` values are rejected in `evidence_catalog[]`,
+  `incident_window` and `changes[]` (parametrised negative tests)
+- UUID-shaped `service_id` values are rejected
 - CLI `list` is deterministic
 
-### CLI Tests
+### Ambiguity Coverage Tests (`tests/test_ambiguity_coverage.py`)
+- `required_ambiguous_cases(total)` tracks 20% of the suite with a floor of 5
+- A 60-case synthetic suite with only 5 ambiguous cases **fails**
+- A 60-case synthetic suite with 12 ambiguous cases passes
+- The error message states the ratio requirement
+
+### Agent-View / Anti-Leakage Tests (`tests/test_agent_view.py`)
+- The projection contains exactly the allowlisted keys
+- Every evaluator-only key is absent from the projection
+- `affected_services[].impact`, `evidence_catalog[].synthetic_fixture_note`
+  and `incident_window.end` are intentionally excluded
+- No evaluator-only value reaches the projection (value-level scan)
+- An unclassified top-level key **fails closed** (`AgentViewError`)
+- Injected leaks are detected: ground-truth values in evidence summaries,
+  `must_not_claim` text in symptoms, remediation text in `environment`,
+  alternative-diagnosis text in a change summary
+- Allowlists match the schema properties (drift guard in both directions)
+
+### Execution Policy Tests (`tests/test_execution_policy.py`)
+- Every fixture step declares all four classification fields
+- No step mutates state automatically; no automated production mutation
+- All 21 current tool names are in a positive side-effect registry; each of the
+  18 read-only tools has a positive test
+- Unknown names fail closed in every class; novel mutating names
+  (`set_feature_flag`, `promote_deployment`, `run_migration`, `flip_switch`)
+  fail the installed CLI when falsely declared read-only
+- Name heuristics are defence in depth, not runtime authorization
+- `staging_experiment` steps target staging/sandbox only
+- Negative cases: missing class, read-only mutation, automated mutation,
+  production experiment, misclassified mutating tool
+- JSON Schema rejects the same violations independently
+
+### Temporal Integrity (`tests/test_temporal_integrity.py`)
+- `incident_window.end` never appears in a view, including when before cutoff
+- Every typed projected time is at/before cutoff in all current fixtures
+- Independent negative tests for future start, event, collection, both interval
+  endpoints and change timestamps at helper, projection and installed CLI boundaries
+- Timezone-aware RFC 3339 parsing, equal instants at different offsets, and both
+  offset cases where text ordering gives the wrong answer
+- Malformed/naive timestamps, invalid offset components, UTC overflow, paired
+  and reversed intervals, and exact sub-microsecond comparisons
+- Schema timestamp drift guard requires every new typed time to be classified
+
+### Malformed Input (`tests/test_malformed_input.py`)
+- Valid JSON with array/string/null/number root, invalid arrays/objects/scalars,
+  null elements, missing nested structures and invalid identity/enum shapes
+- Schema-invalid cases are diagnosed; dependent policy checks are NOT RUN
+- Composition checks do not crash on invalid shapes; valid cases still get policy checks
+- Installed subprocesses exit exactly 1 with field/file diagnostics, no traceback
+
+### Fixture Semantics (`tests/test_fixture_semantics.py`)
+- INC-013 scores the observed dependency failure, not an untested latent defect
+- Its comparison traces remain required; optional experiments are not assumed performed
+- INC-022 retains genuine observed-error ambiguity because failure-location and
+  flag-off comparison evidence are missing
+- This does not evaluate AI accuracy or prove realism of arbitrary causal prose
+
+### CLI Tests (`tests/test_cli.py`)
 - `nexus-benchmark validate` exits 0 on success
 - `nexus-benchmark validate --case INC-XXX` works
 - `nexus-benchmark validate --case UNKNOWN` fails with clear error
 - `nexus-benchmark list` produces deterministic output
 - Output explicitly states validator does not evaluate AI quality
-
-### Benchmark Hygiene Tests
-- Ground truth separated from agent-visible evidence
-- Expected diagnosis evidence IDs exist in evidence catalog
-- Ambiguous cases have explicit ambiguity notes
-- Insufficient evidence cases have explicit notes
+- Asset resolution is independent of the working directory
+- `NEXUS_BENCHMARKS_DIR` override works and a broken override is rejected
+- **Installed-executable smoke tests** run `--help`, `list` and `validate` as
+  a subprocess from a directory outside the repository
+- The `[project.scripts]` target exists and is callable
 
 ---
 
@@ -79,41 +141,54 @@ NEXUS testing follows a layered approach aligned with the architecture:
 
 ### Principle
 The investigator sees **only** information available at the investigation cutoff:
-- Telemetry up to `incident_window.end`
-- Code at `incident_window.end` (no future commits)
-- Deployments up to `incident_window.end`
+- Telemetry up to `incident_window.investigation_cutoff`
+- Code at `incident_window.investigation_cutoff` (no future commits)
+- Deployments up to `incident_window.investigation_cutoff`
 - Runbooks/docs as they existed at cutoff
+
+> **Correction (2026-10-10, Phase 0 audit).** This list previously read
+> "`incident_window.end`". That was a contradiction: `investigation_cutoff` is
+> the boundary of the frozen snapshot, and in every fixture `end` is *later*
+> than the cutoff (the investigation happens mid-incident). Passing `end` to
+> the agent would tell it when the incident resolved. The bullets now say
+> `investigation_cutoff`, matching the invariant already listed below and the
+> validator in `src/nexus_benchmarks/temporal.py`.
 
 ### Implementation
 ```python
-# Evaluator pseudo-code
+# Future evaluator pseudo-code; no agent/evaluator is implemented in Phase 0.
+from nexus_benchmarks.agent_view import build_agent_view
+
+
 def evaluate_case(case, agent):
-    # Agent input: ONLY evidence_catalog + incident_window + affected_services + initial_symptoms
-    agent_input = {
-        "evidence": case["evidence_catalog"],
-        "incident_window": case["incident_window"],
-        "affected_services": case["affected_services"],
-        "initial_symptoms": case["initial_symptoms"],
-    }
-    
-    # Ground truth: NEVER passed to agent
-    ground_truth = case["ground_truth"]
-    
-    # Run investigation
+    agent_input = build_agent_view(case)  # allowlist + fail-closed temporal checks
     result = agent.investigate(agent_input)
-    
-    # Score against ground truth
-    return score(result, ground_truth)
+    return score(result, case["ground_truth"])  # answer key stays evaluator-only
 ```
 
 ### Anti-Leakage Checks (CI)
-- `ground_truth` keys not present in `evidence_catalog` summaries
+
+Implemented as an allowlisted projection, not a blocklist — see
+[ADR-0010](../decisions/ADR-0010-agent-view-projection.md).
+
+```python
+from nexus_benchmarks.agent_view import build_agent_view
+
+agent_input = build_agent_view(case)  # allowlist, fails closed
+ground_truth = case["ground_truth"]  # never passed to the agent
+score(evaluate(agent_input), ground_truth)
+```
+
+CI checks:
+- No evaluator-only key survives the projection
+- No evaluator-only value appears in the serialised projection
+- An unclassified top-level key aborts the projection
+- Injected leaks are detected (the tests are non-vacuous by construction)
 - `expected_diagnosis.must_not_claim` validated
-- No future commits/deployments in evidence catalog
 
 ---
 
-## Evaluation Metrics
+## Evaluation Metrics (Future Targets, Not Measured Results)
 
 | Metric | Description | Target |
 |--------|-------------|--------|
@@ -166,7 +241,9 @@ def evaluate_case(case, agent):
 - Causal chain forms valid DAG (no cycles)
 - Contradicting evidence acknowledged if exists in ground truth
 - Agent never invents evidence IDs
-- Timestamps in evidence are ≤ investigation_cutoff
+- Timestamps in evidence are ≤ investigation_cutoff (**enforced** by
+  `check_temporal_integrity`; `incident_window.end` is always evaluator-only).
+  Collection time and both interval endpoints are also bounded by the cutoff
 
 ### Tools
 - Hypothesis (Python) for property-based tests
@@ -197,12 +274,22 @@ def evaluate_case(case, agent):
 
 ### Phase 0 (Current)
 ```yaml
-- Install dependencies
+- ./scripts/locked_sync.sh        # uv 0.13.0; --locked, no build isolation
 - Ruff format check
-- Ruff lint
-- Pytest (schema + CLI tests)
-- nexus-benchmark validate
+- Ruff lint                       # lint.ignore = []
+- Pytest (schema, ambiguity, causal-text leakage, temporal, tool policy, malformed input, semantics, lock drift, CLI)
+- nexus-benchmark --help / list / validate      # installed console script
+- ./scripts/wheel_smoke_test.sh   # --no-isolation build; hash-locked clean runtime venv
 ```
+Runs on Python 3.11 and 3.12, triggered by pushes and pull requests against
+`master`. Actions are full-SHA pinned. Tests exercise the real offline uv
+lock checker, plus the build-system-only drift guard. Stale-manifest integration
+probes allow read-only index metadata access for uv's mismatch diagnostic;
+current-lock/build-only and empty-cache fail-closed probes stay offline. The installed wheel's
+fixture manifest and all fixture bytes must match the checkout; its runtime
+closure is exported from the same lock and installed with required hashes,
+without a second dependency resolver. Local versus exact-head hosted evidence
+is recorded in [Phase 0 Status](phase-0-status.md) and PR #1.
 
 ### Phase 1+ (Planned)
 ```yaml
@@ -231,8 +318,16 @@ def evaluate_case(case, agent):
 
 ```
 tests/
-├── test_schema_validation.py    # Schema + benchmark composition (Phase 0)
-├── test_cli.py                  # CLI tests (Phase 0)
+├── conftest.py                  # Shared fixtures (schemas, corpus)
+├── test_schema_validation.py    # Schema + fixtures + format + composition
+├── test_ambiguity_coverage.py   # 20% ambiguity ratio invariant
+├── test_agent_view.py           # Agent-visible / evaluator-only boundary
+├── test_execution_policy.py     # Verification-step execution classes
+├── test_cli.py                  # CLI + installed-executable smoke tests
+├── test_temporal_integrity.py   # Cutoff, RFC 3339, offsets, windows, CLI negatives
+├── test_malformed_input.py      # Controlled shape diagnostics, no tracebacks
+├── test_fixture_semantics.py    # Incident target, ambiguity, arithmetic and lock evidence
+├── test_dependency_lock.py      # Real offline drift rejection + complete hashed closure
 ├── unit/                        # Unit tests (Phase 1+)
 │   ├── test_intelligence.py
 │   ├── test_evidence_bundle.py
@@ -270,6 +365,6 @@ pytest --cov=nexus_benchmarks --cov-report=html
 # Only unit tests (when available)
 pytest -m unit
 
-# Only benchmark tests
-pytest -m schema
+# Schema/fixture tests
+pytest tests/test_schema_validation.py -v
 ```

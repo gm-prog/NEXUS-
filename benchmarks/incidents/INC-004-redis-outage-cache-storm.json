@@ -176,6 +176,10 @@
       "description": "Check Redis cluster status and failover timeline",
       "tool": "get_dependency_status",
       "expected_outcome": "Redis failover at 16:00:15 UTC, 45s duration",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
@@ -183,6 +187,10 @@
       "description": "Correlate cache hit rate drop with Redis failover",
       "tool": "query_metrics",
       "expected_outcome": "Hit rate drops exactly at failover start",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
@@ -190,6 +198,10 @@
       "description": "Verify database load correlates with cache misses",
       "tool": "query_metrics",
       "expected_outcome": "DB CPU spikes 30s after cache hit rate drops",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     }
   ],

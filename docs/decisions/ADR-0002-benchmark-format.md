@@ -1,7 +1,7 @@
 # ADR-0002: Benchmark Format: JSON Schema
 
 - Status: Accepted
-- Date: 2024-01-15
+- Date: 2026-10-09
 
 ## Context
 

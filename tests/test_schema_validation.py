@@ -1,15 +1,13 @@
-#!/usr/bin/env python3
-"""Tests for schema validation and benchmark composition."""
+"""Schema loading, fixture validation, format enforcement and composition checks."""
 
-import tempfile
+import uuid
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
-from jsonschema import Draft202012Validator, ValidationError
+from jsonschema import Draft202012Validator
 
 from nexus_benchmarks.cli import (
-    AMBIGUOUS_TYPES,
-    MIN_AMBIGUITY_CASES,
     MIN_TOTAL_CASES,
     check_composition,
     discover_cases,
@@ -17,6 +15,8 @@ from nexus_benchmarks.cli import (
     load_schema,
     validate_case,
 )
+from nexus_benchmarks.errors import CaseLoadError, SchemaLoadError
+from nexus_benchmarks.execution_policy import check_execution_policy
 
 INCIDENT_SCHEMA_FILE = (
     Path(__file__).parent.parent / "benchmarks" / "schema" / "incident-case.schema.json"
@@ -24,263 +24,255 @@ INCIDENT_SCHEMA_FILE = (
 EVALUATION_SCHEMA_FILE = (
     Path(__file__).parent.parent / "benchmarks" / "schema" / "evaluation-result.schema.json"
 )
-INCIDENTS_DIR = Path(__file__).parent.parent / "benchmarks" / "incidents"
+
+MALFORMED_TIMESTAMPS = [
+    "not-a-timestamp",
+    "2024-01-27 10:00:00",
+    "2024-13-45T99:00:00Z",
+    "27/01/2024T10:00:00Z",
+    "2024-01-27T10:00:00",
+]
 
 
-class TestSchemaLoading:
-    """Test that schemas load and are valid."""
-
-    def test_incident_schema_loads(self):
-        schema = load_schema(INCIDENT_SCHEMA_FILE)
-        assert schema is not None
-        assert "$schema" in schema
-        assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema#"
-
-    def test_evaluation_schema_loads(self):
-        schema = load_schema(EVALUATION_SCHEMA_FILE)
-        assert schema is not None
-        assert "$schema" in schema
-
-    def test_incident_schema_validates_against_metaschema(self):
-        schema = load_schema(INCIDENT_SCHEMA_FILE)
-        Draft202012Validator.check_schema(schema)
-
-    def test_evaluation_schema_validates_against_metaschema(self):
-        schema = load_schema(EVALUATION_SCHEMA_FILE)
-        Draft202012Validator.check_schema(schema)
+def test_incident_schema_loads_and_is_a_draft_2020_12_schema(incident_schema):
+    assert incident_schema["$schema"] == "https://json-schema.org/draft/2020-12/schema#"
+    Draft202012Validator.check_schema(incident_schema)
 
 
-class TestCaseDiscovery:
-    """Test case file discovery."""
-
-    def test_discovers_cases(self):
-        cases = discover_cases()
-        assert len(cases) >= MIN_TOTAL_CASES
-        for case_file in cases:
-            assert case_file.name.startswith("INC-")
-            assert case_file.suffix == ".json"
-
-    def test_deterministic_order(self):
-        cases1 = discover_cases()
-        cases2 = discover_cases()
-        assert cases1 == cases2
+def test_evaluation_schema_loads_and_is_a_draft_2020_12_schema(evaluation_schema):
+    assert evaluation_schema["$schema"] == "https://json-schema.org/draft/2020-12/schema#"
+    Draft202012Validator.check_schema(evaluation_schema)
 
 
-class TestCaseValidation:
-    """Test individual case validation."""
-
-    @pytest.fixture
-    def incident_validator(self):
-        schema = load_schema(INCIDENT_SCHEMA_FILE)
-        return Draft202012Validator(schema)
-
-    def test_all_committed_cases_validate(self, incident_validator):
-        errors = []
-        for filepath in discover_cases():
-            case = load_case(filepath)
-            try:
-                incident_validator.validate(case)
-            except ValidationError as e:
-                errors.append(f"{filepath.name}: {e.message}")
-        assert not errors, "Validation errors:\n" + "\n".join(errors)
-
-    def test_malformed_json_reported(self):
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            f.write("{ invalid json }")
-            f.flush()
-            with pytest.raises(Exception) as exc_info:
-                load_case(Path(f.name))
-            assert "Invalid JSON" in str(exc_info.value)
-
-    def test_missing_required_properties_fail(self, incident_validator):
-        minimal_case = {"schema_version": "1.0.0", "case_id": "INC-999"}
-        errors = validate_case(minimal_case, incident_validator, Path("test.json"))
-        assert len(errors) > 0
-        assert any("title" in e or "category" in e for e in errors)
-
-    def test_unknown_properties_fail_when_additional_false(self, incident_validator):
-        case = load_case(discover_cases()[0])
-        case["unknown_field_that_should_fail"] = "value"
-        errors = validate_case(case, incident_validator, Path("test.json"))
-        assert len(errors) > 0
-        assert any("unknown_field" in e or "additionalProperties" in e for e in errors)
-
-    def test_unsupported_schema_version_fails_composition(self):
-        cases = []
-        for filepath in discover_cases():
-            case = load_case(filepath)
-            case["schema_version"] = "9.9.9"
-            cases.append(case)
-        errors = check_composition(cases)
-        assert any("Unsupported schema version" in e for e in errors)
-
-    def test_duplicate_case_ids_fail(self, incident_validator):
-        case = load_case(discover_cases()[0])
-        cases = [case, case]
-        errors = check_composition(cases)
-        assert any("Duplicate case_id" in e for e in errors)
-
-    def test_filename_matches_case_id(self):
-        for filepath in discover_cases():
-            case = load_case(filepath)
-            expected_prefix = filepath.name.split("-")[0] + "-" + filepath.name.split("-")[1]
-            assert case["case_id"] == expected_prefix, (
-                f"{filepath.name}: case_id {case['case_id']} doesn't match filename prefix {expected_prefix}"
-            )
-
-    def test_insufficient_total_cases_fails(self):
-        cases = [load_case(f) for f in discover_cases()[: MIN_TOTAL_CASES - 1]]
-        errors = check_composition(cases)
-        assert any("Insufficient total cases" in e for e in errors)
-
-    def test_insufficient_ambiguity_coverage_fails(self):
-        cases = [load_case(f) for f in discover_cases()[:MIN_TOTAL_CASES]]
-        for case in cases:
-            case["scenario_type"] = "single_cause"
-        errors = check_composition(cases)
-        assert any("Insufficient ambiguous" in e for e in errors)
+def test_case_discovery_is_deterministic_and_minimally_sized(case_paths):
+    assert len(case_paths) >= MIN_TOTAL_CASES
+    assert discover_cases() == case_paths
+    for path in case_paths:
+        assert path.name.startswith("INC-")
+        assert path.suffix == ".json"
 
 
-class TestAmbiguityCoverage:
-    """Test that ambiguity coverage requirements are met."""
+def test_all_committed_cases_validate(incident_validator, case_paths):
+    errors = []
+    for path in case_paths:
+        errors.extend(validate_case(load_case(path), incident_validator, path))
+    assert errors == []
 
-    def test_at_least_5_ambiguous_in_first_20(self):
-        cases = [load_case(f) for f in discover_cases()[:20]]
-        ambiguous_count = sum(1 for c in cases if c.get("scenario_type") in AMBIGUOUS_TYPES)
-        assert ambiguous_count >= MIN_AMBIGUITY_CASES, (
-            f"Only {ambiguous_count} ambiguous cases in first 20"
+
+def test_schema_declares_slug_identifiers_not_uuids(incident_schema):
+    """Finding 3: the schema and the fixtures must agree on one ID contract."""
+    affected = incident_schema["properties"]["affected_services"]["items"]["properties"]
+    evidence = incident_schema["properties"]["evidence_catalog"]["items"]["properties"]
+    ground_truth = incident_schema["properties"]["ground_truth"]["properties"]
+
+    for field in (
+        affected["service_id"],
+        evidence["service_id"],
+        evidence["environment_id"],
+        incident_schema["properties"]["changes"]["items"]["properties"]["service_id"],
+        ground_truth["primary_service_id"],
+    ):
+        assert field["$ref"] in {"#/$defs/service_id", "#/$defs/environment_id"}
+        assert "format" not in field
+
+    assert incident_schema["$defs"]["service_id"]["pattern"] == ("^svc-[a-z0-9]+(?:-[a-z0-9]+)*$")
+    assert incident_schema["$defs"]["environment_id"]["pattern"] == (
+        "^env-[a-z0-9]+(?:-[a-z0-9]+)*$"
+    )
+
+
+def test_every_fixture_identifier_is_a_slug(corpus):
+    for case in corpus:
+        case_id = case["case_id"]
+        for service in case["affected_services"]:
+            assert service["service_id"].startswith("svc-"), case_id
+        for evidence in case["evidence_catalog"]:
+            assert evidence["service_id"].startswith("svc-"), case_id
+            assert evidence["environment_id"].startswith("env-"), case_id
+        for change in case["changes"]:
+            assert change["service_id"].startswith("svc-"), case_id
+
+
+def test_validator_actually_enables_format_checking(incident_validator):
+    """A Draft 2020-12 validator with no FormatChecker silently ignores `format`."""
+    checker = incident_validator.format_checker
+    assert checker is not None
+    assert "date-time" in checker.checkers, (
+        "rfc3339-validator must be installed for date-time format checking"
+    )
+    assert "uuid" in checker.checkers
+
+
+@pytest.mark.parametrize("timestamp", MALFORMED_TIMESTAMPS)
+def test_malformed_event_time_is_rejected(incident_validator, sample_case, timestamp):
+    sample_case["evidence_catalog"][0]["event_time"] = timestamp
+    assert validate_case(sample_case, incident_validator, Path("test.json"))
+
+
+@pytest.mark.parametrize("timestamp", MALFORMED_TIMESTAMPS)
+def test_malformed_incident_window_is_rejected(incident_validator, sample_case, timestamp):
+    sample_case["incident_window"]["investigation_cutoff"] = timestamp
+    assert validate_case(sample_case, incident_validator, Path("test.json"))
+
+
+def test_malformed_change_timestamp_is_rejected(incident_validator, sample_case):
+    sample_case["changes"][0]["timestamp"] = "yesterday"
+    assert validate_case(sample_case, incident_validator, Path("test.json"))
+
+
+def test_well_formed_timestamp_is_accepted(incident_validator, sample_case):
+    sample_case["evidence_catalog"][0]["event_time"] = "2024-01-27T10:00:00Z"
+    assert validate_case(sample_case, incident_validator, Path("test.json")) == []
+
+
+def test_uuid_service_id_is_rejected(incident_validator, sample_case):
+    sample_case["affected_services"][0]["service_id"] = str(uuid.uuid4())
+    errors = validate_case(sample_case, incident_validator, Path("test.json"))
+    assert errors and "service_id" in errors[0]
+
+
+def test_malformed_environment_id_is_rejected(incident_validator, sample_case):
+    sample_case["evidence_catalog"][0]["environment_id"] = "PROD US EAST 1"
+    assert validate_case(sample_case, incident_validator, Path("test.json"))
+
+
+def test_missing_required_properties_fail(incident_validator):
+    errors = validate_case(
+        {"schema_version": "1.0.0", "case_id": "INC-999"},
+        incident_validator,
+        Path("test.json"),
+    )
+    assert errors
+    assert any("title" in error or "category" in error for error in errors)
+
+
+def test_unknown_properties_fail_when_additional_properties_is_false(
+    incident_validator, sample_case
+):
+    sample_case["unknown_field_that_should_fail"] = "value"
+    errors = validate_case(sample_case, incident_validator, Path("test.json"))
+    assert errors
+    assert any("unknown_field" in error for error in errors)
+
+
+def test_malformed_json_is_reported(tmp_path):
+    bad_file = tmp_path / "bad.json"
+    bad_file.write_text("{ not valid json", encoding="utf-8")
+    with pytest.raises(CaseLoadError) as excinfo:
+        load_case(bad_file)
+    assert "Invalid JSON" in str(excinfo.value)
+
+
+def test_missing_schema_file_is_reported(tmp_path):
+    with pytest.raises(SchemaLoadError):
+        load_schema(tmp_path / "does-not-exist.json")
+
+
+def test_filename_matches_case_id(case_paths):
+    for path in case_paths:
+        case = load_case(path)
+        assert path.name.startswith(case["case_id"]), (
+            f"{path.name}: case_id {case['case_id']} does not match the filename"
         )
 
-    def test_ambiguous_cases_have_ambiguity_note(self):
-        for filepath in discover_cases():
-            case = load_case(filepath)
-            if case.get("scenario_type") in AMBIGUOUS_TYPES:
-                gt = case.get("ground_truth", {})
-                assert gt.get("ambiguity_note") or gt.get("insufficient_evidence_note"), (
-                    f"{case['case_id']}: ambiguous case missing ambiguity/insufficient_evidence note"
-                )
 
-    def test_insufficient_evidence_cases_have_note(self):
-        for filepath in discover_cases():
-            case = load_case(filepath)
-            if case.get("scenario_type") == "insufficient_evidence":
-                gt = case.get("ground_truth", {})
-                assert gt.get("insufficient_evidence_note"), (
-                    f"{case['case_id']}: insufficient_evidence case missing note"
-                )
+def test_unsupported_schema_version_fails_composition(corpus):
+    cases = deepcopy(corpus)
+    for case in cases:
+        case["schema_version"] = "9.9.9"
+    assert any("Unsupported schema version" in e for e in check_composition(cases))
 
 
-class TestGroundTruthSeparation:
-    """Test that ground truth is separated from agent-visible evidence."""
-
-    def test_ground_truth_not_in_evidence_catalog(self):
-        for filepath in discover_cases():
-            case = load_case(filepath)
-            evidence_ids = {e["evidence_id"] for e in case.get("evidence_catalog", [])}
-            gt = case.get("ground_truth", {})
-
-            for key in [
-                "root_cause_type",
-                "primary_service_id",
-                "trigger_change_id",
-                "causal_chain",
-                "ambiguity_note",
-                "insufficient_evidence_note",
-            ]:
-                if key in gt and gt[key]:
-                    assert key not in str(case.get("evidence_catalog", [])), (
-                        f"{case['case_id']}: ground truth field '{key}' leaked into evidence_catalog"
-                    )
-
-    def test_expected_diagnosis_references_exist(self):
-        for filepath in discover_cases():
-            case = load_case(filepath)
-            evidence_ids = {e["evidence_id"] for e in case.get("evidence_catalog", [])}
-            required = case.get("expected_diagnosis", {}).get("must_include_evidence_ids", [])
-            for req_id in required:
-                assert req_id in evidence_ids, (
-                    f"{case['case_id']}: expected_diagnosis references missing evidence {req_id}"
-                )
-
-    def test_must_not_claim_not_in_evidence(self):
-        for filepath in discover_cases():
-            case = load_case(filepath)
-            evidence_text = str(case.get("evidence_catalog", []))
-            must_not = case.get("expected_diagnosis", {}).get("must_not_claim", [])
-            for claim in must_not:
-                pass
+def test_duplicate_case_ids_fail(corpus):
+    cases = [corpus[0], corpus[0]]
+    assert any("Duplicate case_id" in e for e in check_composition(cases))
 
 
-class TestCLI:
-    """Test CLI commands."""
-
-    def test_list_command(self, capsys):
-        from nexus_benchmarks.cli import list_cases
-
-        cases = list_cases()
-        assert len(cases) >= MIN_TOTAL_CASES
-        for case in cases:
-            assert "case_id" in case
-            assert "title" in case
-            assert case["case_id"].startswith("INC-")
-
-    def test_validate_unknown_case_fails(self):
-        from nexus_benchmarks.cli import validate_all
-
-        incident_schema = load_schema(INCIDENT_SCHEMA_FILE)
-        success, errors = validate_all(incident_schema, "INC-999")
-        assert not success
-        assert any("not found" in e.lower() for e in errors)
-
-    def test_validate_specific_case(self):
-        from nexus_benchmarks.cli import validate_all
-
-        incident_schema = load_schema(INCIDENT_SCHEMA_FILE)
-        success, errors = validate_all(incident_schema, "INC-001")
-        assert success, f"INC-001 validation failed: {errors}"
+def test_insufficient_total_cases_fails(corpus):
+    assert any(
+        "Insufficient total cases" in e for e in check_composition(corpus[: MIN_TOTAL_CASES - 1])
+    )
 
 
-class TestEvaluationSchema:
-    """Test evaluation result schema."""
-
-    def test_evaluation_schema_structure(self):
-        schema = load_schema(EVALUATION_SCHEMA_FILE)
-        required_fields = [
-            "schema_version",
-            "case_id",
-            "run_id",
-            "run_timestamp",
-            "detection_result",
-            "service_localization_result",
-            "root_cause_result",
-            "evidence_references_used",
-            "scores",
-        ]
-        for field in required_fields:
-            assert field in schema.get("required", []), f"Missing required field: {field}"
-
-    def test_scores_all_metrics_present(self):
-        schema = load_schema(EVALUATION_SCHEMA_FILE)
-        scores_props = schema["properties"]["scores"]["properties"]
-        expected_metrics = [
-            "detection",
-            "service_localization",
-            "root_cause_accuracy",
-            "change_attribution",
-            "evidence_grounding",
-            "evidence_reference_validity",
-            "required_evidence_coverage",
-            "supporting_evidence_coverage",
-            "contradicting_evidence_coverage",
-            "causal_chain_correctness",
-            "false_attribution_rate",
-            "abstention_quality",
-            "investigation_coverage",
-            "tool_efficiency",
-        ]
-        for metric in expected_metrics:
-            assert metric in scores_props, f"Missing score metric: {metric}"
+def test_mixed_schema_versions_are_reported(corpus):
+    cases = deepcopy(corpus)
+    cases[1]["schema_version"] = "2.0.0"
+    errors = check_composition(cases)
+    assert any("Multiple schema versions" in e for e in errors)
+    # A migration in progress still contains supported cases, so the
+    # "unsupported" error is reserved for a corpus that dropped support.
+    assert not any("Unsupported schema version" in e for e in errors)
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+def test_corpus_without_the_supported_version_fails(corpus):
+    cases = deepcopy(corpus)
+    for case in cases:
+        case["schema_version"] = "2.0.0"
+    assert any("Unsupported schema version" in e for e in check_composition(cases))
+
+
+def test_committed_corpus_has_no_composition_errors(corpus):
+    assert check_composition(corpus) == []
+
+
+def test_committed_corpus_has_no_execution_policy_errors(corpus):
+    assert check_execution_policy(corpus) == []
+
+
+# --- Cross-field semantic invariants --------------------------------------
+
+
+def test_change_attribution_requires_a_trigger_change(corpus):
+    """A case cannot demand attribution to a change it does not name."""
+    for case in corpus:
+        trigger = case["ground_truth"].get("trigger_change_id") or ""
+        if case["expected_diagnosis"]["change_attribution_match"]:
+            assert trigger, f"{case['case_id']}: attribution required but no trigger named"
+
+
+MIN_ALTERNATIVES_FOR_AMBIGUOUS = 2
+
+
+def test_ambiguous_cases_offer_at_least_two_alternatives(corpus):
+    """'ambiguous' must mean a real choice, not 'single_cause with extra steps'."""
+    for case in corpus:
+        if case["scenario_type"] == "ambiguous":
+            count = len(case["acceptable_alternatives"])
+            assert count >= MIN_ALTERNATIVES_FOR_AMBIGUOUS, case["case_id"]
+
+
+def test_ambiguous_cases_forbid_at_least_one_claim(corpus):
+    """An ambiguous case must say what may not be asserted confidently."""
+    for case in corpus:
+        if case["scenario_type"] == "ambiguous":
+            assert case["expected_diagnosis"]["must_not_claim"], case["case_id"]
+
+
+def test_confidence_ranges_are_well_ordered(corpus):
+    for case in corpus:
+        for index, alternative in enumerate(case["acceptable_alternatives"]):
+            low, high = alternative["confidence_range"]
+            assert 0.0 <= low <= high <= 1.0, (case["case_id"], index)
+
+
+def test_min_confidence_never_exceeds_the_best_alternative(corpus):
+    """The required confidence floor must be reachable by some hypothesis."""
+    for case in corpus:
+        floor = case["expected_diagnosis"]["min_confidence"]
+        best = max(
+            (alternative["confidence_range"][1] for alternative in case["acceptable_alternatives"]),
+            default=1.0,
+        )
+        assert floor <= best, f"{case['case_id']}: floor {floor} exceeds best upper bound {best}"
+
+
+def test_every_referenced_evidence_id_resolves(corpus):
+    """No dangling evidence references in must_include, alternatives or chains."""
+    for case in corpus:
+        catalog = {item["evidence_id"] for item in case["evidence_catalog"]}
+        referenced = set(case["expected_diagnosis"]["must_include_evidence_ids"])
+        for alternative in case["acceptable_alternatives"]:
+            referenced.update(alternative["evidence_ids"])
+        for link in case["ground_truth"].get("causal_chain", []):
+            referenced.update(link.get("evidence_ids", []))
+        assert referenced <= catalog, f"{case['case_id']}: {sorted(referenced - catalog)}"

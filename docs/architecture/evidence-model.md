@@ -163,6 +163,6 @@ Each link has evidence IDs and confidence.
 **Critical for benchmark integrity.**
 
 - **Ground Truth (Evaluator-only):** The authoritative answer for a synthetic scenario. Includes root cause, trigger change, full causal chain, ambiguity designation. **Never passed to the agent.**
-- **Agent-Visible Evidence Bundle:** The observations, signals, deployments, commits, runbooks, and historical incidents that would be available at the investigation cutoff time. **No ground truth fields.**
+- **Agent-Visible Evidence Bundle:** The observations, signals, deployments, commits, runbooks, and historical incidents available at `incident_window.investigation_cutoff`. **No ground truth fields or `incident_window.end` (resolution/observation completion metadata).** Event time alone is insufficient: collection time and both optional aggregate-window endpoints must also be at/before the cutoff. Future records are rejected rather than filtered. The validator and `build_agent_view()` compare timezone-aware RFC 3339 instants in UTC, not timestamp strings. Opaque prose/configuration context still needs fixture-author review.
 
 The benchmark schema enforces this separation via distinct top-level objects: `ground_truth` (evaluator-only) and `evidence_catalog` (agent-visible specifications). The evaluator compares the agent's output against `ground_truth`; the agent never sees it.

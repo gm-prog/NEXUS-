@@ -182,6 +182,10 @@
       "description": "Inspect message at problematic offset",
       "tool": "inspect_kafka_message",
       "expected_outcome": "Message at offset 456789 has null value",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
@@ -189,6 +193,10 @@
       "description": "Check consumer code for null checks",
       "tool": "get_commit",
       "expected_outcome": "Message handler accesses message.sku without null check",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     }
   ],

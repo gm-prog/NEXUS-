@@ -192,16 +192,24 @@
   "required_checks": [
     {
       "check_id": "chk-001-kill-migration",
-      "description": "Kill migration and observe latency (if recovers → lock cause)",
+      "description": "PROPOSED CONTROLLED EXPERIMENT (not an investigation query): replay the catalog migration in the staging environment under production-like load and cancel it mid-flight to measure the latency contribution of the AccessExclusiveLock. Requires explicit human authorization; staging target only. Never cancel a production migration automatically.",
       "tool": "execute_db_command",
-      "expected_outcome": "If latency drops → lock was primary cause",
+      "expected_outcome": "If latency drops when the migration is cancelled, the lock is the primary cause",
+      "execution_class": "staging_experiment",
+      "target_environment": "staging",
+      "mutates_state": true,
+      "automated_execution_allowed": false,
       "critical": true
     },
     {
       "check_id": "chk-002-prewarm-cache",
-      "description": "Pre-warm cache and observe (if recovers → stampede cause)",
+      "description": "PROPOSED CONTROLLED EXPERIMENT (not an investigation query): in the staging environment, replay a cold-cache start and then pre-warm the catalog cache under production-like load to measure the latency contribution of the stampede. Requires explicit human authorization; staging target only.",
       "tool": "cache_warmup",
-      "expected_outcome": "If latency drops → stampede was primary cause",
+      "expected_outcome": "If latency drops once the cache is warm, the stampede is the primary cause",
+      "execution_class": "staging_experiment",
+      "target_environment": "staging",
+      "mutates_state": true,
+      "automated_execution_allowed": false,
       "critical": true
     },
     {
@@ -209,6 +217,10 @@
       "description": "Analyze which queries are blocked by migration lock",
       "tool": "query_database",
       "expected_outcome": "Show catalog queries blocked by AccessExclusiveLock",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     }
   ],
