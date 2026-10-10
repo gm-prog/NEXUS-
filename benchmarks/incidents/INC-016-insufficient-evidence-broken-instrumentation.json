@@ -1,11 +1,11 @@
 {
   "schema_version": "1.0.0",
   "case_id": "INC-016",
-  "title": "Metric Alert Caused by Broken Instrumentation Not Real Issue",
+  "title": "Error-Counter Defect with Unresolved Underlying Failure Rate",
   "category": "http_5xx_burst",
   "scenario_type": "insufficient_evidence",
   "difficulty": "hard",
-  "description": "Alert fired for 'HTTP 5xx rate > 5%' on user-service. Investigation reveals the metric itself is wrong: a recent instrumentation change doubled the error counter increment. Actual error rate is normal. The alert is a false positive caused by broken instrumentation.",
+  "description": "The user-service alert reports HTTP 5xx rate > 5%, with a displayed baseline of 0.5% and current rate of 8%. Code evidence establishes two increments per error, but the frozen evidence lacks aligned request totals, population coverage and numerator/denominator definitions. Only if those definitions and windows align does 8% / 2 imply 4%: eight times the 0.5% baseline, not normal; the reported 8% is sixteen times baseline. The scoring target is an evidence-bounded diagnosis of instrumentation error with unresolved underlying service health and alert validity, not a confirmed false positive or sole root cause.",
   "environment": {
     "name": "production",
     "region": "us-east-1",
@@ -19,7 +19,7 @@
   "initial_symptoms": [
     "Alert: user-service HTTP 5xx rate > 5%",
     "Dashboard shows error rate spike from 0.5% to 8%",
-    "But manual log inspection shows normal error volume",
+    "Access logs report ~50 5xx/min unchanged, but no aligned total request counts are supplied",
     "Recent instrumentation change deployed"
   ],
   "affected_services": [
@@ -41,7 +41,7 @@
       "time_window_end": "2024-01-30T09:10:00Z",
       "service_id": "svc-004-user",
       "environment_id": "env-prod-us-east-1",
-      "summary": "Metric shows HTTP 5xx rate spiked from 0.5% to 8% at 09:00 UTC",
+      "summary": "Metric shows HTTP 5xx rate spiked from 0.5% to 8% at 09:00 UTC; numerator and denominator definitions and aligned request totals are not supplied",
       "query_reference": "SELECT http_5xx_rate FROM service_metrics WHERE service='user-service'",
       "data_provenance": "derived_calculation",
       "integrity_status": "unverified",
@@ -57,12 +57,12 @@
       "collection_time": "2024-01-30T09:10:00Z",
       "service_id": "svc-004-user",
       "environment_id": "env-prod-us-east-1",
-      "summary": "Actual access logs show 5xx count unchanged: ~50/min (normal baseline)",
+      "summary": "Access logs report ~50 5xx/min, unchanged from the logged count baseline; request totals and coverage relative to the dashboard population/window are not supplied, so this count does not establish an error rate",
       "query_reference": "SELECT count(*) FROM access_logs WHERE service='user-service' AND status >= 500",
       "data_provenance": "direct_observation",
       "integrity_status": "verified",
       "availability_status": "available",
-      "synthetic_fixture_note": "Phase 1/2 will generate actual access logs showing normal error rate"
+      "synthetic_fixture_note": "Synthetic count observation, not an aligned request-rate measurement or proof of normal service health"
     },
     {
       "evidence_id": "ev-003-deployment-instrumentation",
@@ -107,12 +107,12 @@
       "time_window_end": "2024-01-30T09:02:10Z",
       "service_id": "svc-004-user",
       "environment_id": "env-prod-us-east-1",
-      "summary": "Traces show normal request flow with 200 OK responses; no actual 5xx errors",
+      "summary": "The sampled user-normal-001 trace returns 200 OK without a 5xx; no fleet-wide sampling coverage or total request count is supplied",
       "query_reference": "GET /api/v1/traces/user-normal-001",
       "data_provenance": "direct_observation",
       "integrity_status": "verified",
       "availability_status": "available",
-      "synthetic_fixture_note": "Phase 1/2 will generate traces showing normal responses"
+      "synthetic_fixture_note": "Synthetic successful trace sample; it does not establish the failure rate of the request population"
     }
   ],
   "changes": [
@@ -123,66 +123,67 @@
       "service_id": "svc-004-user",
       "summary": "Deployed user-service v3.1.0 with double-increment metrics bug",
       "commit_sha": "jkl555mno666",
-      "deployed_by": "ci-bot"
+      "deployed_by": "ci-bot",
+      "details": {
+        "error_counter_increments_per_error": 2,
+        "counter_validation_evidence_id": "ev-004-commit-instrumentation-bug",
+        "rate_denominator_alignment": "not_established",
+        "aligned_request_totals_available": false
+      }
     }
   ],
   "ground_truth": {
     "root_cause_type": "insufficient_evidence",
     "primary_service_id": "svc-004-user",
-    "trigger_change_id": "chg-001-deploy-instrumentation",
+    "trigger_change_id": "",
     "causal_chain": [
       {
         "from_type": "trigger",
-        "from_description": "Deployment introduced double-increment in error counter",
+        "from_description": "The deployed instrumentation revision adds a second increment for the same error event",
         "to_type": "mechanism",
-        "to_description": "Each actual error increments counter twice; metric shows 2x real error rate",
+        "to_description": "The middleware and handler duplicate error-counter updates; this establishes a counter defect, not the dashboard rate denominator",
         "evidence_ids": ["ev-003-deployment-instrumentation", "ev-004-commit-instrumentation-bug"],
         "confidence": 0.95
       },
       {
         "from_type": "mechanism",
-        "from_description": "Metric shows 8% error rate (2x actual ~4% which is still elevated but not alerting threshold)",
+        "from_description": "The duplicate counter, log counts and successful trace sample do not supply comparable numerator/denominator populations",
         "to_type": "symptom",
-        "to_description": "Alert fires for >5% but actual errors normal",
+        "to_description": "The displayed alert cannot establish whether a real rate increase coexists with instrumentation error or whether the alert is a false positive",
         "evidence_ids": ["ev-001-metric-5xx-spike", "ev-002-log-actual-errors", "ev-005-trace-normal"],
-        "confidence": 0.9
+        "confidence": 0.6
       }
     ],
     "ambiguity_note": "",
-    "insufficient_evidence_note": "The evidence shows the METRIC is wrong, not that there's a real error spike. However, we cannot be 100% certain there isn't ALSO a real issue masked by the metric bug. The actual logs and traces show normal behavior, but we only sampled a subset. A proper diagnosis: 'Metric instrumentation bug confirmed (double increment). Actual error rate appears normal based on log/trace sampling. Recommend fixing instrumentation and re-evaluating. Confidence: 0.9 that this is a false positive alert.'",
-    "contributing_factors": ["No metric validation in CI", "Instrumentation change not reviewed for correctness", "Alert on derived metric without ground truth validation"]
+    "insufficient_evidence_note": "The scoring target is the unresolved underlying HTTP failure rate and alert validity. The code supports duplicate error-counter increments, but no aligned request denominator or complete population/window coverage is available. Conditional on identical rate definitions, denominator and window, 8% / 2 = 4%; 4% / 0.5% = 8 and 8% / 0.5% = 16. Thus even that conditional 4% is elevated relative to the supplied baseline, although below the stated >5% alert threshold. The ~50/min logs cannot supply a rate without total requests, and a successful sampled trace cannot exclude other failures. Do not infer a false-positive alert, normal service health, a confirmed real spike, or sole-cause attribution from these artifacts. High confidence in the code-level defect is not high confidence in the true rate.",
+    "contributing_factors": ["Duplicate error-counter updates in deployed instrumentation", "Missing aligned rate definitions and request totals", "Limited trace sampling coverage"]
   },
   "expected_diagnosis": {
     "root_cause_type_match": false,
     "service_localization_match": true,
-    "change_attribution_match": true,
-    "min_confidence": 0.85,
-    "must_include_evidence_ids": ["ev-001-metric-5xx-spike", "ev-002-log-actual-errors", "ev-004-commit-instrumentation-bug"],
-    "must_not_claim": ["Real 5xx spike occurring", "User service is actually failing"]
+    "change_attribution_match": false,
+    "min_confidence": 0.0,
+    "must_include_evidence_ids": ["ev-001-metric-5xx-spike", "ev-002-log-actual-errors", "ev-004-commit-instrumentation-bug", "ev-005-trace-normal"],
+    "must_not_claim": ["The actual error rate is normal", "The alert is a confirmed false positive", "The double increment is the sole incident root cause", "A real 5xx spike is confirmed", "The sampled logs or trace prove fleet-wide service health"]
   },
   "misleading_or_confounding_signals": [
-    "Dashboard shows clear spike (but metric is wrong)",
-    "Alert fired (but based on faulty metric)",
-    "Recent deployment (but it's instrumentation, not functional code)"
+    "An unverified dashboard rate is not a validated request-failure rate",
+    "Stable error counts can coexist with changing request volume",
+    "Successful trace sampling does not rule out failures outside the sample"
   ],
   "acceptable_alternatives": [
     {
-      "description": "Metric bug confirmed; no real incident (false positive)",
-      "evidence_ids": ["ev-001-metric-5xx-spike", "ev-002-log-actual-errors", "ev-004-commit-instrumentation-bug", "ev-005-trace-normal"],
-      "confidence_range": [0.85, 0.95]
-    },
-    {
-      "description": "Metric bug + real issue masked (less likely)",
-      "evidence_ids": ["ev-001-metric-5xx-spike", "ev-002-log-actual-errors"],
-      "confidence_range": [0.05, 0.15]
+      "description": "Identify the deployed counter defect while explicitly withholding judgment on the true failure rate, alert validity and any concurrent service fault",
+      "evidence_ids": ["ev-001-metric-5xx-spike", "ev-002-log-actual-errors", "ev-003-deployment-instrumentation", "ev-004-commit-instrumentation-bug", "ev-005-trace-normal"],
+      "confidence_range": [0.0, 0.6]
     }
   ],
   "required_checks": [
     {
       "check_id": "chk-001-compare-metric-vs-logs",
-      "description": "Compare metric-derived error rate vs actual log count",
+      "description": "Compare the reported metric and log error counts, checking denominator, population and window alignment before interpreting them as rates",
       "tool": "query_logs",
-      "expected_outcome": "Logs show ~50 5xx/min; metric shows ~100 5xx/min (2x)",
+      "expected_outcome": "The available logs provide an error count but not a comparable request denominator; neither an actual 4% rate nor normal health is established",
       "execution_class": "read_only",
       "target_environment": "production",
       "mutates_state": false,
@@ -193,7 +194,18 @@
       "check_id": "chk-002-inspect-instrumentation",
       "description": "Review metrics middleware code for double increment",
       "tool": "get_commit",
-      "expected_outcome": "Counter incremented in both middleware and handler",
+      "expected_outcome": "The error-counting path updates the same counter in both layers; that code review does not establish the dashboard denominator",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
+      "critical": true
+    },
+    {
+      "check_id": "chk-003-request-rate-alignment",
+      "description": "Request aligned error and total-request counts with the metric definition and sampling coverage",
+      "tool": "query_metrics",
+      "expected_outcome": "Aligned totals and numerator scope are absent from the frozen evidence; gathering them is necessary before confirming any underlying rate or false-positive diagnosis",
       "execution_class": "read_only",
       "target_environment": "production",
       "mutates_state": false,
@@ -202,14 +214,14 @@
     }
   ],
   "remediation_guidance": {
-    "suggestion": "Fix double-increment in metrics middleware; add metric validation tests; alert on log-derived error rate as backup",
+    "suggestion": "Propose fixing duplicate error-counter updates and validating rates against aligned request counts; continue investigating service health rather than dismissing the alert",
     "risk_level": "low",
     "test_plan": [
-      "Fix instrumentation code",
-      "Unit test metric increments",
-      "Deploy and verify metric matches log count"
+      "Unit-test one increment per error event",
+      "Verify numerator, denominator and sampling/window alignment",
+      "Reassess service health and the alert with validated rates; no recovery result is assumed"
     ],
     "rollback_plan": "Rollback to user-service v3.0.5"
   },
-  "tags": ["insufficient-evidence", "false-positive", "instrumentation-bug", "metric-error", "user-service"]
+  "tags": ["insufficient-evidence", "instrumentation-bug", "metric-error", "unresolved-error-rate", "user-service"]
 }

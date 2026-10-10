@@ -2,26 +2,68 @@
 
 ## Development Environment
 
-- **Python:** 3.11+ (tested on 3.12)
-- **Package Manager:** `pip` (standard) or `uv` (recommended for speed)
-- **OS:** Linux, macOS, Windows (WSL2 recommended on Windows)
+- **Python:** 3.11 or 3.12 (CI tests both)
+- **Dependency tool:** `uv` **0.13.0**, enforced by `tool.uv.required-version`
+- **OS:** Linux/macOS with Bash; Windows via WSL2
 
 ## Dependency Installation
 
-```bash
-# Standard pip
-pip install -e ".[dev]"
+Install the pinned uv release in a **separate tooling environment**, not in the
+project `.venv` (sync intentionally removes undeclared packages). For example,
+using an existing tooling virtualenv:
 
-# With uv (faster)
-uv sync --dev
+```bash
+python -m pip install --only-binary=:all: --no-deps "uv==0.13.0"
+uv --version
 ```
 
-**Lockfile: none is committed.** `pyproject.toml` declares minimum version
-bounds, not exact versions. Installs are not pinned, hash-checked or guaranteed
-byte-reproducible. Adopting a reviewed lockfile with enforced locked/hashed
-installs is a **pre-Phase-1 prerequisite**, not implementation work for this
-correction. Owner: NEXUS maintainers. Trigger: before any Phase 1 implementation
-begins. See [SECURITY.md](SECURITY.md#supply-chain).
+CI instead uses a verified full-SHA `setup-uv` action with this exact version
+and its release checksums. Bootstrap uv is tooling, not an independently
+resolved application environment.
+
+```bash
+./scripts/locked_sync.sh
+source .venv/bin/activate
+uv lock --check                # fails on manifest/lock drift; never rewrites
+```
+
+`uv.lock` commits the full runtime/dev/build closure with versions and artifact
+SHA-256 hashes. The setup script stages locked third-party wheels with
+`uv sync --locked --extra dev --no-install-project --no-build`, then installs
+this project with `--locked --no-build-isolation`. `hatchling`, the `build`
+frontend and the PEP 660 helper `editables` are in the locked dev closure.
+No isolated build environment or unbounded pip upgrade is used.
+
+**Build requirements must be mirrored verbatim in the dev extra.** uv does not
+include `build-system.requires` in its project dependency metadata check; the
+setup script rejects build-only changes that evade `uv lock --check`. Update
+both declarations together, then regenerate the lock. A real subprocess
+regression covers this bypass, as well as runtime/lint/build dependency drift.
+
+### Deliberate Lock Updates
+
+```bash
+# After a manifest edit (including mirrored build constraints):
+uv lock
+
+# For an intentional, scoped upgrade instead:
+uv lock --upgrade-package PACKAGE_NAME
+# Or an explicitly reviewed full refresh: uv lock --upgrade
+
+./scripts/locked_sync.sh
+# Run every quality gate below, including wheel smoke on the updated closure.
+git diff -- pyproject.toml uv.lock
+```
+
+Commit the manifest and lock changes together. CI never regenerates the lock
+for you, and uses `--locked` rather than `--frozen` to detect metadata drift.
+Use `.venv/bin/python -m build --no-isolation` for a manual build; the wheel
+smoke script additionally exports hash-locked runtime requirements, rejects
+source builds, and installs the local wheel `--no-deps --no-index` in a fresh
+venv before checking it from outside the checkout.
+
+These pins improve dependency repeatability, not OS/Python-patch reproducibility
+or a guarantee of vulnerability-free packages. See [SECURITY.md](SECURITY.md#supply-chain).
 
 ## Running Checks
 
@@ -83,6 +125,15 @@ per-object allowlists) may be shown to an investigator:
 The projection **fails closed**: an unclassified top-level key aborts the
 projection instead of being forwarded. `tests/test_agent_view.py` pins this
 boundary and proves it is non-vacuous by injecting leaks.
+
+The value scan includes **all causal-chain descriptions and check outcomes**,
+case-insensitively against actual projected strings (including free-form keys).
+Only two reviewed case/hidden-path/visible-path/**complete-text** tuples are
+exempt: an observed INC-021 symptom and an INC-006 log quotation. Copies at
+other locations, changed answers and appended copies still fail. See
+[ADR-0014](docs/decisions/ADR-0014-phase-0-sign-off-corrections.md).
+The minimum eight-character match and paraphrase limitation remain heuristics;
+manual review is required, not blanket exclusion of any answer-text category.
 
 ### Temporal Cutoff (frozen snapshot)
 

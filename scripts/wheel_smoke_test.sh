@@ -10,11 +10,15 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/nexus-wheel-smoke-XXXXXX")"
 trap 'rm -rf "$WORKDIR"' EXIT
 
-echo "==> Building wheel and sdist from ${REPO_ROOT}"
-python -m build --outdir "${WORKDIR}/dist" "${REPO_ROOT}"
+echo "==> Enforcing the committed dependency lock (including build backend)"
+"${REPO_ROOT}/scripts/locked_sync.sh"
+PYTHON="${REPO_ROOT}/.venv/bin/python"
+
+echo "==> Building wheel and sdist without isolated dependency resolution"
+"${PYTHON}" -m build --no-isolation --outdir "${WORKDIR}/dist" "${REPO_ROOT}"
 
 echo "==> Wheel contents (benchmark assets must be present)"
-SMOKE_DIST_DIR="${WORKDIR}/dist" SMOKE_REPO_ROOT="${REPO_ROOT}" python - <<'PY'
+SMOKE_DIST_DIR="${WORKDIR}/dist" SMOKE_REPO_ROOT="${REPO_ROOT}" "${PYTHON}" - <<'PY'
 import os
 import sys
 import zipfile
@@ -52,13 +56,26 @@ with zipfile.ZipFile(wheel) as archive:
 print("    Manifest and fixture bytes match the checkout: OK")
 PY
 
-echo "==> Creating a clean virtual environment"
-python -m venv "${WORKDIR}/venv"
-"${WORKDIR}/venv/bin/python" -m pip install --quiet --upgrade pip
-"${WORKDIR}/venv/bin/python" -m pip install --quiet "${WORKDIR}"/dist/*.whl
+echo "==> Exporting the locked, hashed runtime closure"
+# No optional dev extra: the clean environment tests runtime dependencies only.
+uv export --project "${REPO_ROOT}" --locked --no-dev --no-emit-project \
+    --output-file "${WORKDIR}/runtime-requirements.txt" > /dev/null
+
+echo "==> Creating a clean virtual environment with the same interpreter"
+uv venv --python "${PYTHON}" "${WORKDIR}/venv"
+# Reject source builds and missing/mismatched hashes; every transitive runtime
+# dependency is explicit in the export, so no independent resolution is needed.
+uv pip install --python "${WORKDIR}/venv/bin/python" --require-hashes \
+    --only-binary :all: --no-deps --requirements "${WORKDIR}/runtime-requirements.txt"
+# The local, just-verified artifact is installed without dependency/index access.
+uv pip install --python "${WORKDIR}/venv/bin/python" --no-deps --no-index \
+    "${WORKDIR}"/dist/*.whl
+uv pip check --python "${WORKDIR}/venv/bin/python"
 
 echo "==> Running the installed CLI from ${WORKDIR} (outside the repository)"
 cd "${WORKDIR}"
+# Do not let checkout/import overrides masquerade as installed wheel assets.
+unset NEXUS_BENCHMARKS_DIR PYTHONPATH
 "${WORKDIR}/venv/bin/nexus-benchmark" --help
 "${WORKDIR}/venv/bin/nexus-benchmark" list
 "${WORKDIR}/venv/bin/nexus-benchmark" validate

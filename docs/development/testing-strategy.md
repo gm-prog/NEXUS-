@@ -274,16 +274,20 @@ CI checks:
 
 ### Phase 0 (Current)
 ```yaml
-- Install dependencies (pip install -e ".[dev]" build)
+- ./scripts/locked_sync.sh        # uv 0.13.0; --locked, no build isolation
 - Ruff format check
 - Ruff lint                       # lint.ignore = []
-- Pytest (schema, ambiguity, agent-view, temporal integrity, tool policy, malformed input, semantics, CLI)
+- Pytest (schema, ambiguity, causal-text leakage, temporal, tool policy, malformed input, semantics, lock drift, CLI)
 - nexus-benchmark --help / list / validate      # installed console script
-- python -m build
-- ./scripts/wheel_smoke_test.sh   # wheel in a clean venv, outside the checkout
+- ./scripts/wheel_smoke_test.sh   # --no-isolation build; hash-locked clean runtime venv
 ```
 Runs on Python 3.11 and 3.12, triggered by pushes and pull requests against
-`master`.
+`master`. Actions are full-SHA pinned. Tests exercise the real offline uv
+lock checker, plus the build-system-only drift guard. The installed wheel's
+fixture manifest and all fixture bytes must match the checkout; its runtime
+closure is exported from the same lock and installed with required hashes,
+without a second dependency resolver. Local versus exact-head hosted evidence
+is recorded in [Phase 0 Status](phase-0-status.md) and PR #1.
 
 ### Phase 1+ (Planned)
 ```yaml
@@ -320,7 +324,8 @@ tests/
 ├── test_cli.py                  # CLI + installed-executable smoke tests
 ├── test_temporal_integrity.py   # Cutoff, RFC 3339, offsets, windows, CLI negatives
 ├── test_malformed_input.py      # Controlled shape diagnostics, no tracebacks
-├── test_fixture_semantics.py    # Observed-incident target and true ambiguity
+├── test_fixture_semantics.py    # Incident target, ambiguity, arithmetic and lock evidence
+├── test_dependency_lock.py      # Real offline drift rejection + complete hashed closure
 ├── unit/                        # Unit tests (Phase 1+)
 │   ├── test_intelligence.py
 │   ├── test_evidence_bundle.py

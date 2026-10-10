@@ -61,13 +61,14 @@ RUN in the CLI, rather than being fed to policy helpers.
 Leak detection combines two independent checks:
 
 1. No evaluator-only *key* survives the projection.
-2. No evaluator-only *value* (≥ 8 characters) appears in the serialised
-   projection. Two categories are excluded from the value scan because they
-   legitimately restate agent-visible observations and produced false
-   positives on the current corpus: `required_checks[].expected_outcome` (often
-   quotes a log line that is itself evidence) and
-   `ground_truth.causal_chain[].*_description` (paraphrases symptoms). Both
-   remain covered by the key-level allowlist.
+2. Every evaluator-only free-text *value* (≥ 8 characters), including all
+   causal-chain descriptions and required-check outcomes, is scanned against
+   actual projected strings, including free-form dictionary keys. Matches are
+   case-insensitive, without JSON-escaping blind spots. The original broad
+   category exclusions are superseded by
+   [ADR-0014](ADR-0014-phase-0-sign-off-corrections.md): only two reviewed
+   case/hidden-path/visible-path/complete-text tuples are allowed. Identifier
+   cross-references are not answer prose and remain excluded.
 
 The tests prove the checks are non-vacuous by injecting leaks (ground-truth
 values copied into evidence summaries, `must_not_claim` appended to symptoms,

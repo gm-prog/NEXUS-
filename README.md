@@ -114,10 +114,10 @@ NEXUS does not claim to be an all-knowing autonomous SRE. The design favors expl
 | Validation CLI (`nexus-benchmark`) | ✅ IMPLEMENTED (installed console script) |
 | Agent-view / ground-truth separation | ✅ IMPLEMENTED (allowlisted projection + temporal cutoff, tested) |
 | Verification-step execution policy | ✅ IMPLEMENTED (`read_only` / `staging_experiment` / `human_approval_required`, registered-tool allowlist) |
-| Automated tests (pytest) | ✅ LOCALLY VERIFIED (345 tests; see status report for hosted evidence) |
+| Automated tests (pytest) | ✅ VERIFIED (382 local tests; dated local/hosted evidence in status report) |
 | Linting/formatting (Ruff) | ✅ IMPLEMENTED |
 | CI (GitHub Actions) | ✅ IMPLEMENTED (triggers on `master`) |
-| Dependency lockfile | ❌ NOT PRESENT — pre-Phase-1 prerequisite; minimum bounds only |
+| Dependency lockfile | ✅ COMMITTED (`uv.lock`; strict runtime/dev/build installs and hash-checked wheel smoke) |
 | Telemetry ingestion pipeline | ❌ PLANNED (Phase 1+) |
 | AI investigation agent | ❌ PLANNED (Phase 4+) |
 | UI / Dashboard | ❌ PLANNED (Phase 3+) |
@@ -130,15 +130,17 @@ For the commands that were actually executed and their results, see
 
 **Readiness:** Phase 0 correction is not permission to start Phase 1. The
 [status report](docs/development/phase-0-status.md) separates executed local
-checks from observed hosted checks and records remaining fixture-semantic and
-pre-Phase-1 prerequisites. No diagnosis-accuracy result is claimed.
+checks from exact-head hosted evidence in PR #1 and records the reviewed
+INC-016/INC-019, leakage and lock corrections. No diagnosis-accuracy result is
+claimed. Phase 1 requires a separate instruction and has not started.
 
 ## Quick Start
 
 ### Prerequisites
 
 - Python 3.11+
-- `pip` or `uv`
+- `uv` **0.13.0** on PATH, installed outside the project `.venv`
+- Bash (Windows: WSL2)
 
 ### Installation
 
@@ -147,10 +149,10 @@ pre-Phase-1 prerequisites. No diagnosis-accuracy result is claimed.
 git clone https://github.com/gm-prog/NEXUS-.git
 cd NEXUS-
 
-# Install with dev dependencies
-pip install -e ".[dev]"
-# Or with uv:
-# uv sync --dev
+# Enforce uv.lock, stage the locked build backend, then install editable
+# without build isolation. See CONTRIBUTING.md for pinned uv setup.
+./scripts/locked_sync.sh
+source .venv/bin/activate
 ```
 
 ### Validate Benchmarks
@@ -223,9 +225,10 @@ nexus-benchmark validate
 
 ## Non-Goals / Current Limitations
 
-- No lockfile: dependencies are minimum version bounds only, so installs are not
-  byte-for-byte reproducible. A reviewed lockfile and enforced locked/hashed
-  installs are required **before Phase 1 begins** (owner: NEXUS maintainers)
+- `uv.lock` pins dependency versions and artifact hashes, not the OS image or
+  Python patch release; this is not a byte-for-byte build or security guarantee
+- The answer-text scan detects verbatim copies, not semantic/paraphrased leaks;
+  two exact reviewed observation overlaps are documented in ADR-0014
 - No telemetry collection, processing, or storage
 - No AI model integration or agent framework; no benchmark diagnosis accuracy has
   been measured. Passing validation establishes fixture/schema hygiene only

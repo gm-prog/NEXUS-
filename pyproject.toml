@@ -28,13 +28,15 @@ keywords = ["benchmark", "incident", "observability", "validation", "json-schema
 [project.optional-dependencies]
 dev = [
     "build>=1.2.0",
+    "hatchling>=1.25.0",
+    "editables>=0.5",
     "pytest>=8.0.0",
     "pytest-cov>=4.1.0",
     "ruff>=0.6.0",
 ]
 
-# NOTE: dependencies are declared as minimum version bounds only. There is no
-# committed lockfile; see SECURITY.md ("Supply Chain") and CONTRIBUTING.md.
+# Library constraints remain minimum bounds; uv.lock pins the reviewed complete
+# runtime/dev/build environment. CI rejects manifest drift with --locked.
 [project.scripts]
 nexus-benchmark = "nexus_benchmarks.cli:main"
 
@@ -63,7 +65,12 @@ include = [
     "LICENSE",
     "README.md",
     "SECURITY.md",
+    "uv.lock",
+    "scripts",
 ]
+
+[tool.uv]
+required-version = "==0.13.0"
 
 [tool.ruff]
 target-version = "py311"

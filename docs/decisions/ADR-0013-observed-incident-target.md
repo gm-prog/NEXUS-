@@ -54,8 +54,10 @@ injection implementation.
 Manual review also identified material questions outside this targeted fix:
 INC-016's double-count arithmetic versus its stated baseline, and INC-019's
 plain SELECT versus its claimed write-blocking lock mechanism. They are recorded
-in the phase status report, not silently rewritten or claimed validated by
-passing JSON Schema checks. INC-017's populated trigger and optional attribution
+in the then-current phase status report, not silently rewritten or claimed
+validated by passing JSON Schema checks. The subsequent explicitly authorized
+sign-off corrections resolve those two questions in
+[ADR-0014](ADR-0014-phase-0-sign-off-corrections.md). INC-017's populated trigger and optional attribution
 are not contradictory by themselves: attribution is not required when the
 relative primary contribution is unresolved.
 

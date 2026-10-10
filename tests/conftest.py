@@ -105,7 +105,7 @@ def run_cli(tmp_path):
     """Run the installed console script against a throwaway benchmarks tree."""
 
     def _run(cases: dict[str, object], *args: str) -> subprocess.CompletedProcess:
-        assert INSTALLER is not None, 'Install the CLI first: python -m pip install -e ".[dev]"'
+        assert INSTALLER is not None, "Install the CLI first: ./scripts/locked_sync.sh"
         root = tmp_path / "benchmarks"
         shutil.copytree(SCHEMA_DIR, root / "schema")
         incidents = root / "incidents"

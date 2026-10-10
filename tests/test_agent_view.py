@@ -5,6 +5,7 @@ answer key. These tests pin down the allowlisted projection that separates
 them, and prove the projection is non-vacuous by injecting leaks.
 """
 
+import re
 from copy import deepcopy
 
 import pytest
@@ -14,6 +15,7 @@ from nexus_benchmarks.agent_view import (
     AGENT_VISIBLE_ROOT_KEYS,
     EVALUATOR_ONLY_NESTED_KEYS,
     EVALUATOR_ONLY_ROOT_KEYS,
+    REVIEWED_OBSERVATION_OVERLAPS,
     build_agent_view,
     evaluator_only_values,
     find_leaks,
@@ -159,3 +161,134 @@ def test_resolution_time_is_intentionally_excluded_from_schema_projection():
     """Explicitly classify end; do not loosen the drift guard for all nested fields."""
     assert EVALUATOR_ONLY_NESTED_KEYS["incident_window"] == {"end"}
     assert AGENT_VISIBLE_NESTED_KEYS["incident_window"] == {"start", "investigation_cutoff"}
+
+
+@pytest.mark.parametrize("description_key", ["from_description", "to_description"])
+@pytest.mark.parametrize(
+    "visible_path",
+    [
+        "initial_symptoms[0]",
+        "evidence_catalog[0].summary",
+        "environment.cluster",
+        "changes[0].summary",
+    ],
+)
+def test_causal_description_copy_is_detected(corpus, description_key, visible_path):
+    case = deepcopy(corpus[0])
+    hidden_path = f"ground_truth.causal_chain[0].{description_key}"
+    hidden = case["ground_truth"]["causal_chain"][0][description_key]
+    _set_at_path(case, visible_path, hidden)
+    assert any(hidden_path in finding and visible_path in finding for finding in find_leaks(case))
+
+
+@pytest.mark.parametrize("description_key", ["from_description", "to_description"])
+def test_causal_copy_with_quotes_and_newlines_is_detected(corpus, description_key):
+    case = deepcopy(corpus[0])
+    hidden = 'Evaluator-only conclusion: "the counter is the sole cause"\nwithout proof'
+    case["ground_truth"]["causal_chain"][0][description_key] = hidden
+    case["evidence_catalog"][0]["summary"] = hidden
+    assert any(description_key in finding for finding in find_leaks(case))
+
+
+def test_copy_into_free_form_object_key_is_detected(corpus):
+    case = deepcopy(corpus[0])
+    hidden = case["ground_truth"]["causal_chain"][0]["to_description"]
+    case["changes"][0]["details"] = {hidden: True}
+    assert any("to_description" in finding and ".<key>" in finding for finding in find_leaks(case))
+
+
+def test_check_outcome_copy_is_detected(corpus):
+    case = deepcopy(corpus[0])
+    case["environment"]["cluster"] = case["required_checks"][0]["expected_outcome"]
+    assert any("required_checks[0].expected_outcome" in finding for finding in find_leaks(case))
+
+
+def test_causal_descriptions_and_check_outcomes_are_all_scanned(corpus):
+    for case in corpus:
+        values = dict(evaluator_only_values(case))
+        for index, link in enumerate(case["ground_truth"]["causal_chain"]):
+            for key in ("from_description", "to_description"):
+                assert values[f"ground_truth.causal_chain[{index}].{key}"] == link[key]
+        for index, step in enumerate(case["required_checks"]):
+            assert values[f"required_checks[{index}].expected_outcome"] == step["expected_outcome"]
+
+
+@pytest.mark.parametrize("overlap", sorted(REVIEWED_OBSERVATION_OVERLAPS))
+def test_reviewed_observation_overlap_is_exact_and_still_scanned_elsewhere(corpus, overlap):
+    case_id, hidden_path, visible_path, hidden_value, visible_value = overlap
+    case = deepcopy(next(case for case in corpus if case["case_id"] == case_id))
+    assert (hidden_path, hidden_value) in evaluator_only_values(case)
+    assert _get_at_path(build_agent_view(case), visible_path) == visible_value
+    assert find_leaks(case) == []
+    case["environment"]["cluster"] = hidden_value
+    assert any(
+        hidden_path in finding and "environment.cluster" in finding for finding in find_leaks(case)
+    )
+
+
+@pytest.mark.parametrize("overlap", sorted(REVIEWED_OBSERVATION_OVERLAPS))
+def test_reviewed_paths_do_not_exempt_changed_answer_text(corpus, overlap):
+    case_id, hidden_path, visible_path, _, _ = overlap
+    case = deepcopy(next(case for case in corpus if case["case_id"] == case_id))
+    novel = "Novel evaluator-only causal conclusion not established by the observations"
+    _set_at_path(case, hidden_path, novel)
+    _set_at_path(case, visible_path, novel)
+    assert any(hidden_path in finding and visible_path in finding for finding in find_leaks(case))
+
+
+@pytest.mark.parametrize("overlap", sorted(REVIEWED_OBSERVATION_OVERLAPS))
+def test_reviewed_paths_do_not_exempt_added_copies(corpus, overlap):
+    case_id, hidden_path, visible_path, hidden_value, visible_value = overlap
+    case = deepcopy(next(case for case in corpus if case["case_id"] == case_id))
+    _set_at_path(case, visible_path, visible_value + " Evaluator says: " + hidden_value)
+    assert any(hidden_path in finding and visible_path in finding for finding in find_leaks(case))
+
+
+def test_legitimate_evidence_paraphrase_is_not_a_verbatim_leak(corpus):
+    case = deepcopy(next(case for case in corpus if case["case_id"] == "INC-019"))
+    case["ground_truth"]["causal_chain"][0]["to_description"] = (
+        "The explicit table lock blocks INSERT and UPDATE until the owning transaction ends"
+    )
+    observation = "INSERT and UPDATE wait on the analytics transaction's SHARE table lock"
+    case["initial_symptoms"].append(observation)
+    assert observation in build_agent_view(case)["initial_symptoms"]
+    assert find_leaks(case) == []
+
+
+@pytest.mark.parametrize("description_key", ["from_description", "to_description"])
+def test_installed_cli_rejects_causal_description_copy(corpus, run_cli, description_key):
+    case = deepcopy(corpus[0])
+    case["evidence_catalog"][0]["summary"] = case["ground_truth"]["causal_chain"][0][
+        description_key
+    ]
+    result = run_cli({"INC-001-causal-copy.json": case}, "--case", "INC-001")
+    assert result.returncode == 1
+    assert f"ground_truth.causal_chain[0].{description_key}" in result.stderr
+    assert "Traceback" not in result.stdout + result.stderr
+
+
+def _get_at_path(case, path):
+    value = case
+    for part in re.findall(r"[^.\[\]]+", path):
+        value = value[int(part)] if part.isdecimal() else value[part]
+    return value
+
+
+def _set_at_path(case, path, value):
+    parts = re.findall(r"[^.\[\]]+", path)
+    parent = _get_at_path(case, ".".join(parts[:-1]))
+    key = int(parts[-1]) if parts[-1].isdecimal() else parts[-1]
+    parent[key] = value
+
+
+@pytest.mark.parametrize("description_key", ["from_description", "to_description"])
+def test_every_corpus_causal_description_copy_is_detected(corpus, description_key):
+    for source_case in corpus:
+        for index, link in enumerate(source_case["ground_truth"]["causal_chain"]):
+            case = deepcopy(source_case)
+            hidden_path = f"ground_truth.causal_chain[{index}].{description_key}"
+            case["evidence_catalog"][0]["summary"] = link[description_key]
+            assert any(hidden_path in finding for finding in find_leaks(case)), (
+                case["case_id"],
+                hidden_path,
+            )

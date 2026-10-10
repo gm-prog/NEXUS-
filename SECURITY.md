@@ -44,16 +44,23 @@ Key principles:
 
 ## Supply Chain
 
-- **No lockfile is committed.** `pyproject.toml` declares *minimum* version
-  bounds only (for example `jsonschema>=4.23.0`), so two installs a week apart
-  can resolve different versions. This is a known gap, not a pinned supply
-  chain.
-- `rfc3339-validator` is a declared runtime dependency because `jsonschema`
-  only enforces `format: date-time` when a `FormatChecker` backend is present.
-- CI installs from PyPI with `pip` and does not use hash checking.
-- No arbitrary code execution from benchmark fixtures (they are data, not code).
-- A reviewed lockfile plus enforced locked/hashed installs is a
-  **pre-Phase-1 prerequisite**, not a Phase 1 task that can be deferred until
-  after implementation starts. Owner: NEXUS maintainers. Trigger: before any
-  Phase 1 implementation begins. This correction does not adopt tooling or
-  silently generate a lockfile. See [CONTRIBUTING.md](CONTRIBUTING.md#dependency-installation).
+- `uv.lock` commits the complete runtime/dev/build closure with exact versions
+  and SHA-256 artifact hashes. Library metadata retains minimum bounds; the
+  repository's supported development/CI path is the strict locked setup.
+- CI uses `uv` 0.13.0, a full-SHA setup action and embedded release checksums.
+  Checkout and Python setup actions also use verified immutable full SHAs.
+- `scripts/locked_sync.sh` checks manifest consistency and stages locked wheels
+  before building this project **without isolation**. Build-system constraints
+  must be mirrored in the dev extra, closing uv's build-only drift blind spot.
+- Wheel smoke exports locked, hashed runtime requirements, requires matching
+  hashes and binary wheels, then installs the local wheel `--no-deps --no-index`.
+  No independent pip dependency resolution or unbounded tool upgrade bypasses
+  the lock in CI/build/install validation.
+- `rfc3339-validator` remains a declared runtime dependency because `jsonschema`
+  only enforces `format: date-time` with its `FormatChecker` backend installed.
+- No arbitrary code execution from benchmark fixtures: SQL and remediation
+  descriptions are data, not executed operations or runtime authorization.
+- Locked versions are not proof of vulnerability absence. OS images, Python
+  patch releases and arbitrary downstream library-consumer installs are not
+  pinned by this lock. Review updates with the commands in
+  [CONTRIBUTING.md](CONTRIBUTING.md#deliberate-lock-updates).

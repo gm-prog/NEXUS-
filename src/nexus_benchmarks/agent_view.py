@@ -17,7 +17,7 @@ The projection also fails closed. A top-level key that has not been classified
 either way aborts the projection instead of being silently forwarded.
 """
 
-import json
+from collections.abc import Iterator
 from copy import deepcopy
 
 from nexus_benchmarks.errors import (
@@ -111,10 +111,30 @@ EVALUATOR_ONLY_NESTED_KEYS: dict[str, frozenset[str]] = {
 #: Allowlisted nested fields that hold a single object rather than an array.
 NESTED_OBJECT_KEYS: frozenset[str] = frozenset({"environment", "incident_window"})
 
-#: Shortest evaluator-only string worth scanning for in the agent view. The
-#: current corpus stays leak-free even down to 4 characters, so 8 leaves margin
-#: for new fixtures while still filtering incidental word overlap.
+#: Shortest evaluator-only string scanned, to filter incidental word overlap.
+#: This is a verbatim-copy heuristic, not a semantic answer-leakage proof.
 _MIN_LEAK_TOKEN_LENGTH = 8
+
+#: Two author-reviewed observations, NOT exemptions for a field/category.
+#: Every tuple pins case ID, hidden path, visible path and BOTH complete texts.
+#: A copy elsewhere, a changed answer, or added text at the approved location
+#: is still scanned. See docs/decisions/ADR-0014-phase-0-sign-off-corrections.md.
+REVIEWED_OBSERVATION_OVERLAPS: frozenset[tuple[str, str, str, str, str]] = frozenset({
+    (
+        "INC-021",
+        "ground_truth.causal_chain[1].to_description",
+        "initial_symptoms[2]",
+        "Thread pools exhausted in payment, checkout, order, user services",
+        "Thread pools exhausted in payment, checkout, order, user services",
+    ),
+    (
+        "INC-006",
+        "required_checks[0].expected_outcome",
+        "evidence_catalog[1].summary",
+        "Logs show 'Rate limit exceeded: 100 req/min'",
+        "Gateway logs show 'Rate limit exceeded: 100 req/min' for all incoming requests",
+    ),
+})
 
 
 def build_agent_view(case: dict) -> dict:
@@ -198,10 +218,11 @@ def _ground_truth_values(ground_truth: dict) -> list[tuple[str, str]]:
         if isinstance(ground_truth.get(key), str):
             found.append((f"ground_truth.{key}", ground_truth[key]))
     found.extend(_list_values("ground_truth.contributing_factors", ground_truth))
-    # causal_chain[].from_description / to_description are deliberately not
-    # scanned: they paraphrase observations that are already agent-visible
-    # (symptoms, evidence summaries), so matching them reports noise rather
-    # than leakage. They remain covered by the key-level allowlist.
+    for index, link in enumerate(_as_list(ground_truth.get("causal_chain"))):
+        if isinstance(link, dict):
+            for key in ("from_description", "to_description"):
+                if isinstance(link.get(key), str):
+                    found.append((f"ground_truth.causal_chain[{index}].{key}", link[key]))
     return found
 
 
@@ -233,14 +254,12 @@ def _remediation_values(remediation: dict) -> list[tuple[str, str]]:
 
 
 def _check_values(case: dict) -> list[tuple[str, str]]:
-    # Only `description` is scanned. `expected_outcome` frequently quotes a log
-    # line or metric that is itself agent-visible evidence, so substring
-    # matching it reports noise rather than leakage. It stays covered by the
-    # key-level allowlist.
     found: list[tuple[str, str]] = []
     for index, step in enumerate(_as_list(case.get("required_checks"))):
-        if isinstance(step, dict) and isinstance(step.get("description"), str):
-            found.append((f"required_checks[{index}].description", step["description"]))
+        if isinstance(step, dict):
+            for key in ("description", "expected_outcome"):
+                if isinstance(step.get(key), str):
+                    found.append((f"required_checks[{index}].{key}", step[key]))
     return found
 
 
@@ -263,11 +282,11 @@ def find_leaks(case: dict) -> list[str]:
     Two independent checks:
 
     1. No evaluator-only *key* survives the projection.
-    2. No evaluator-only *value* appears anywhere in the serialised
-       projection. See :func:`evaluator_only_values` for the two categories
-       (causal-chain descriptions, check expected outcomes) that are excluded
-       from the value scan because they legitimately restate agent-visible
-       observations.
+    2. Evaluator-only free text, including every causal-chain description and
+       check outcome, is scanned against projected strings (including keys).
+       Only the exact reviewed observation/path/text tuples above are allowed.
+       Identifier cross-references and strings shorter than eight characters
+       are not answer-text checks; paraphrases still need author review.
     """
     if not isinstance(case, dict):
         return [MalformedCaseError.case_not_an_object(case).message]
@@ -283,11 +302,37 @@ def find_leaks(case: dict) -> list[str]:
         for key in sorted(EVALUATOR_ONLY_ROOT_KEYS & set(view))
     ]
 
-    blob = json.dumps(view, ensure_ascii=False, sort_keys=True).lower()
-    for path, value in evaluator_only_values(case):
-        token = value.strip().lower()
-        if len(token) >= _MIN_LEAK_TOKEN_LENGTH and token in blob:
-            findings.append(
-                f"{case_id}: evaluator-only value from {path} appears in the agent view"
-            )
+    visible_strings = list(_visible_strings(view))
+    for hidden_path, hidden_value in evaluator_only_values(case):
+        token = hidden_value.strip().casefold()
+        if len(token) < _MIN_LEAK_TOKEN_LENGTH:
+            continue
+        for visible_path, visible_value in visible_strings:
+            if token not in visible_value.casefold():
+                continue
+            overlap = (case_id, hidden_path, visible_path, hidden_value, visible_value)
+            if overlap not in REVIEWED_OBSERVATION_OVERLAPS:
+                findings.append(
+                    f"{case_id}: evaluator-only value from {hidden_path} "
+                    f"appears in {visible_path} of the agent view"
+                )
     return findings
+
+
+def _visible_strings(value: object, path: str = "") -> Iterator[tuple[str, str]]:
+    """Scan actual strings, not JSON escapes, while retaining match locations.
+
+    Include dictionary keys: free-form changes.details could otherwise hide
+    answer text in a key rather than a value.
+    """
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if isinstance(key, str):
+                yield f"{path}.<key>", key
+            child_path = f"{path}.{key}" if path else str(key)
+            yield from _visible_strings(child, child_path)
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            yield from _visible_strings(child, f"{path}[{index}]")
+    elif isinstance(value, str):
+        yield path, value

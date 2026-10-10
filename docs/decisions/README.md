@@ -38,6 +38,7 @@ This directory contains Architecture Decision Records for NEXUS.
 | [ADR-0011](ADR-0011-benchmark-assets-in-the-distribution.md) | Benchmark Assets Ship Inside the Distribution | Accepted | 2026-10-10 |
 | [ADR-0012](ADR-0012-temporal-cutoff-integrity.md) | Fail-Closed Temporal Cutoff Integrity | Accepted | 2026-10-10 |
 | [ADR-0013](ADR-0013-observed-incident-target.md) | Score the Observed Incident, Not a Hypothetical Latent Defect | Accepted | 2026-10-10 |
+| [ADR-0014](ADR-0014-phase-0-sign-off-corrections.md) | Phase 0 Sign-Off: Evidence, Causal-Text Leakage and Locked Dependencies | Accepted | 2026-10-10 |
 
 ## When to Create an ADR
 
