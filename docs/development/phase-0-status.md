@@ -41,12 +41,42 @@ New decisions are recorded as [ADR-0008](../decisions/ADR-0008-benchmark-identif
 
 ---
 
+## Second Corrective Pass (2026-10-10)
+
+The first corrective pass was audited against the Phase 0 acceptance criteria
+rather than against "do the tests pass". Four defects survived it. All four are
+fixed in commit `558c4bd`, which is the current head of PR #1.
+
+| # | Finding | Severity | Fix |
+|---|---------|----------|-----|
+| 11 | `incident_window.end` was allowlisted as agent-visible. It is later than `investigation_cutoff` in **21 of 21** fixtures, so the projection told the investigator when an in-flight incident resolved | P1 | Conditionally excluded: `end` is forwarded only when it parses as an instant **at or before** the cutoff. Unparseable, missing or naive ⇒ dropped, so "cannot prove it is past" never becomes "assume it is past" |
+| 12 | The temporal cutoff invariant was documented but unenforced. Zero of the 112 evidence items violate it today — by luck, not by construction | P1 | New `src/nexus_benchmarks/temporal.py`; `nexus-benchmark validate` gained a **Temporal integrity checks** line covering evidence `event_time` / `collection_time` / `time_window_end`, `changes[].timestamp`, `incident_window.start`, and both reversed-window orderings |
+| 13 | `is_mutating_tool()` was a prefix/name heuristic, so it failed **open**: a step using `set_feature_flag`, `promote_deployment` or `run_migration` was accepted as `read_only` and therefore autonomously executable | P1 | Positive registry `TOOL_REGISTRY` naming all 21 corpus tools. Unregistered ⇒ reported, never defaults to `read_only`. Prefix patterns kept only as defence in depth |
+| 14 | Structurally invalid fixtures escaped the CLI as uncaught `AttributeError`s (four reproducible inputs), and `validate_all()` ran policy checks over cases that had already failed schema validation | P2 | All three per-case checks are structurally defensive and return controlled `MalformedCaseError` strings; policy/temporal/projection checks now run only on schema-valid cases, with a "skipped" note for the rest |
+
+Also fixed: `actions/checkout` v4 → v7.0.1 and `actions/setup-python` v5 →
+v7.0.0 (both v4/v5 declare `using: node20`, which GitHub deprecated —
+version facts read from upstream `action.yml` and release notes, not guessed);
+`security@nexus.local` removed from SECURITY.md (placeholder domain nobody
+monitors); lockfile follow-up given an owner and a trigger.
+
+Deliberately **not** changed, with the rationale recorded in the commit and in
+`CONTRIBUTING.md`: INC-013 (an `ambiguous` case whose leading alternative sits
+at 0.7–0.9) and INC-017 (`trigger_change_id` set while
+`change_attribution_match` is `false`). Both are coherent under the corpus's own
+conventions, and both conventions are now pinned by tests instead of by
+rewriting fixtures the audit did not author.
+
+Tests went from 113 to **218**.
+
+---
+
 ## Implemented Items
 
 ### Repository Foundation
 - [x] Python 3.11+ project with `pyproject.toml`
 - [x] Ruff for linting/formatting (`lint.ignore = []` — no rules suppressed)
-- [x] Pytest for testing (113 tests)
+- [x] Pytest for testing (218 tests)
 - [x] GitHub Actions CI triggering on `master`
 - [x] MIT `LICENSE` (was referenced by the README but missing)
 - [x] `.gitignore` with secrets, env, caches excluded
@@ -154,14 +184,17 @@ repository root.
 | Check | Command | Result |
 |-------|---------|--------|
 | Editable install | `python -m pip install -e ".[dev]" build` | ✅ PASS |
-| Format check | `ruff format --check .` | ✅ PASS — "37 files already formatted" |
+| Format check | `ruff format --check .` | ✅ PASS — "44 files already formatted" |
 | Lint | `ruff check .` | ✅ PASS — "All checks passed!" (0 errors, `lint.ignore = []`) |
-| Tests | `pytest -v` | ✅ PASS — 113 passed |
+| Tests | `pytest -v` | ✅ PASS — 218 passed |
 | CLI help | `nexus-benchmark --help` | ✅ PASS |
 | CLI list | `nexus-benchmark list` | ✅ PASS — 21 cases listed |
-| CLI validate | `nexus-benchmark validate` | ✅ PASS — exit 0, "All 21 cases: VALID" + composition, execution-policy and agent-view checks |
+| CLI validate | `nexus-benchmark validate` | ✅ PASS — exit 0, "All 21 cases: VALID" + composition, execution-policy, temporal-integrity and agent-view checks |
 | Build | `python -m build` | ✅ PASS — sdist + wheel built |
 | Wheel smoke test | `./scripts/wheel_smoke_test.sh` | ✅ PASS — wheel installed in a clean venv, CLI run from `/tmp`, 21 fixtures packaged |
+
+All nine rows above were re-executed at `558c4bd` after the second corrective
+pass; the counts and quoting are from that run, not from the first pass.
 
 `nexus-benchmark validate` output:
 
@@ -173,11 +206,17 @@ Validating cases...
 All 21 cases: VALID
 Composition checks: PASSED
 Execution policy checks: PASSED
+Temporal integrity checks: PASSED
 Agent-view separation checks: PASSED
 
 Note: This validator checks schema compliance and benchmark hygiene only.
 It does NOT evaluate AI diagnosis quality or accuracy.
 ```
+
+The `Temporal integrity checks` line is new in the second corrective pass. It
+is a correctness gate, not a lint: a fixture whose evidence, changes or window
+start post-date `investigation_cutoff` fails `nexus-benchmark validate`
+non-zero in CI.
 
 ### Baseline before the corrective pass (recorded for contrast)
 
@@ -185,7 +224,7 @@ It does NOT evaluate AI diagnosis quality or accuracy.
 |-------|--------|-------|
 | `ruff check .` | ❌ 71 errors | ✅ 0 errors |
 | `ruff format --check .` | ✅ pass | ✅ pass |
-| `pytest -v` | ✅ 40 passed (including 2 vacuous tests) | ✅ 113 passed |
+| `pytest -v` | ✅ 40 passed (including 2 vacuous tests) | ✅ 218 passed |
 | `nexus-benchmark --help` | ❌ `ImportError: cannot import name 'main'` | ✅ exit 0 |
 | `nexus-benchmark validate` | ❌ same ImportError | ✅ exit 0 |
 | Wheel install outside the checkout | ❌ assets not found | ✅ pass |
@@ -201,9 +240,37 @@ environment.
 |-----|--------|-------|------------|
 | [38043944704](https://github.com/gm-prog/NEXUS-/actions/runs/38043944704) | `8e59e5039b67bfc34cca9ff33a2ef345eb348515` (corrective commit) | `pull_request` → `master` | ✅ success |
 | [38044279834](https://github.com/gm-prog/NEXUS-/actions/runs/38044279834) | `5245f2cecf27e5e1767698bcae6dc69f9942beb6` (status-report commit) | `pull_request` → `master` | ✅ success |
+| [38044380459](https://github.com/gm-prog/NEXUS-/actions/runs/38044380459) | `aaa325e3ad450fda59bef84bdfebda7ff5ada831` (status-report commit) | `pull_request` → `master` | ✅ success |
+| **[38047759013](https://github.com/gm-prog/NEXUS-/actions/runs/38047759013)** | **`558c4bdbc79714684a4c5fbd13781ea5639abc08` (second corrective pass)** | `pull_request` → `master` | ✅ **success** |
 
-Pull request: [#1](https://github.com/gm-prog/NEXUS-/pull/1). Every workflow run
-recorded for this branch has concluded successfully.
+Pull request: [#1](https://github.com/gm-prog/NEXUS-/pull/1), still open.
+Every workflow run recorded for this branch has concluded successfully.
+
+The run listed last is the verification for the current head. It is a distinct
+run against a distinct SHA; it is not inferred from an earlier commit's result.
+
+Jobs in run 38047759013 (`gh api .../jobs`), all on GitHub-hosted
+`ubuntu-latest`:
+
+| Job | Job ID | Started | Completed | Conclusion |
+|-----|--------|---------|-----------|------------|
+| Validate (Python 3.11) | 114200627971 | 2026-10-10T11:15:23Z | 2026-10-10T11:15:37Z | ✅ success |
+| Validate (Python 3.12) | 114200628171 | 2026-10-10T11:15:23Z | 2026-10-10T11:15:39Z | ✅ success |
+| Wheel smoke test | 114200628173 | 2026-10-10T11:15:23Z | 2026-10-10T11:15:47Z | ✅ success |
+
+`gh run watch 38047759013 --exit-status` exited 0 with all steps in all three
+jobs marked ✅, including Check formatting (Ruff), Lint (Ruff), Run tests
+(pytest), Installed CLI help, List benchmarks, Validate benchmarks, and Build
+and run the installed CLI outside the checkout.
+
+**Node 20 deprecation is cleared.** Every run at `checkout@v4` /
+`setup-python@v5` carried a Node 20 deprecation annotation. Run 38047759013's
+annotation list contains only GitHub's "ubuntu-latest will migrate to Ubuntu
+26" notice; no Node annotation is present, and the job logs contain no
+reference to Node 20. (The old job logs could not be re-fetched to re-display
+the previous warning text — the fetch returned empty — so this rests on the
+new run's annotation list plus the fact that both actions now declare
+`using: node24`, read from their upstream `action.yml`.)
 
 Job results for the corrective commit's run (all three jobs, GitHub-hosted
 `ubuntu-latest`):
@@ -245,7 +312,8 @@ branch that does not exist.
 |------|---------------------|
 | No dependency lockfile | **Open.** Minimum version bounds only; CI can resolve different versions over time. Tracked for Phase 1; documented in SECURITY.md and CONTRIBUTING.md |
 | Wheel embeds a snapshot of `benchmarks/` | **Accepted.** A wheel built from an uncommitted working tree can differ from the committed fixtures; CI builds from a clean checkout |
-| Tool-name mutation heuristic is a prefix/contains test | **Accepted.** A mutating tool with an innocuous name must be added to `execution_policy.py` by hand; the registry is a single source of truth and is unit-tested |
+| Tool registry must be extended by hand | **Accepted.** A new tool fails closed (it is reported and never defaults to `read_only`) until someone registers it; `tests/test_execution_policy.py` asserts that every tool used by the corpus is registered. The prefix/exact-name patterns remain only as defence in depth, to catch a name registered `read_only` that looks mutating |
+| Fixture semantic conventions (INC-013, INC-017) | **Accepted, pinned by tests.** Ambiguity describes the evidence state, not the confidence of the leading hypothesis; `change_attribution_match` records whether attribution is *required*, which it is not when the change's causal role is exactly what is in doubt |
 | Agent-view value scan is a substring heuristic | **Accepted.** Paraphrased leaks are not auto-detected and still need review; the key-level allowlist is the primary guarantee and fails closed |
 | Benchmark fixture realism | **Open.** Synthetic notes specify Phase 1/2 generation requirements |
 | Product naming collision (incident.io Nexus) | Documented in ADR-0007; legal review before public launch |
@@ -283,9 +351,15 @@ branch that does not exist.
 
 ## Sign-Off
 
-Phase 0 engineering checks completed and verified on 2026-10-10. The corrective
-pass above is complete; the open items are recorded as risks, not as passing
-checks.
+Phase 0 engineering checks completed and verified on 2026-10-10. Two corrective
+passes are recorded above; the open items are risks, not passing checks.
+
+Phase 0 is considered **complete pending sign-off**: the installed CLI works,
+one enforced schema/identifier contract is validated in CI, ground truth is
+excluded from a tested allowlisted projection, the 20% ambiguity rule is a ratio
+over the whole set, mutating checks carry an explicit risk classification and are
+backed by a fail-closed tool registry, and all format/lint/test/CLI/build checks
+pass locally and in a hosted run at the current head.
 
 **Phase 1 has not started.** No telemetry ingestion, database, agent runtime,
 LLM integration, RAG, frontend, remediation or GitHub automation code exists
