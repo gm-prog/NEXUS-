@@ -197,6 +197,10 @@
       "description": "Verify pool usage correlates with inventory timeouts",
       "tool": "query_metrics",
       "expected_outcome": "Pool usage increases exactly when inventory latency spikes",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
@@ -204,6 +208,10 @@
       "description": "Check commit for missing connection.close() in catch block",
       "tool": "get_commit",
       "expected_outcome": "Diff shows try-catch without finally/close",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
@@ -211,6 +219,10 @@
       "description": "Analyze traces for connection leak pattern",
       "tool": "get_trace",
       "expected_outcome": "Traces show inventory timeout followed by no connection release",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     }
   ],

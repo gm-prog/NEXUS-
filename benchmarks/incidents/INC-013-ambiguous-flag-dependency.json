@@ -183,6 +183,10 @@
       "description": "Check recommendation engine health independently",
       "tool": "get_dependency_status",
       "expected_outcome": "Engine shows degraded regardless of flag",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
@@ -190,13 +194,21 @@
       "description": "Compare old vs new code path failure rates",
       "tool": "query_traces",
       "expected_outcome": "Both paths show similar failure rates",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
       "check_id": "chk-003-flag-rollback-test",
-      "description": "Disable flag and observe if failures persist",
+      "description": "PROPOSED CONTROLLED EXPERIMENT (not an investigation query): replay the recommendations-v2 flag enablement in the staging environment against the degraded recommendation engine and compare failure rates with the flag on and off. Requires explicit human authorization; staging target only.",
       "tool": "toggle_feature_flag",
-      "expected_outcome": "Failures persist with flag off (proves dependency cause)",
+      "expected_outcome": "Failure rate is unchanged with the flag off (proves the dependency outage is the cause)",
+      "execution_class": "staging_experiment",
+      "target_environment": "staging",
+      "mutates_state": true,
+      "automated_execution_allowed": false,
       "critical": true
     }
   ],

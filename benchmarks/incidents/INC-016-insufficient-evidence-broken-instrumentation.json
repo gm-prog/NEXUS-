@@ -183,6 +183,10 @@
       "description": "Compare metric-derived error rate vs actual log count",
       "tool": "query_logs",
       "expected_outcome": "Logs show ~50 5xx/min; metric shows ~100 5xx/min (2x)",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
@@ -190,6 +194,10 @@
       "description": "Review metrics middleware code for double increment",
       "tool": "get_commit",
       "expected_outcome": "Counter incremented in both middleware and handler",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     }
   ],

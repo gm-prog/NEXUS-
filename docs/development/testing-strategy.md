@@ -19,31 +19,63 @@ NEXUS testing follows a layered approach aligned with the architecture:
 
 ## Phase 0 Testing (Implemented)
 
-### Schema Validation Tests
+### Schema Validation Tests (`tests/test_schema_validation.py`)
 - All committed incident fixtures validate against `incident-case.schema.json`
 - Evaluation result schema validates against `evaluation-result.schema.json`
-- Malformed JSON reported clearly
+- Malformed JSON reported clearly (`CaseLoadError` / `SchemaLoadError`)
 - Missing required properties fail
 - Unknown properties fail where `additionalProperties: false`
-- Unsupported schema versions fail
+- Unsupported schema versions fail; mixed versions reported separately
 - Duplicate case IDs fail
 - Filename/case_id agreement enforced
 - Insufficient scenario count fails
-- Insufficient ambiguity coverage fails
+- The declared identifier contract is slug-based, not UUID-based
+- Every fixture identifier is a slug
+- **The validator really enables `jsonschema.FormatChecker`** (`date-time` and
+  `uuid` checkers present)
+- Malformed `date-time` values are rejected in `evidence_catalog[]`,
+  `incident_window` and `changes[]` (parametrised negative tests)
+- UUID-shaped `service_id` values are rejected
 - CLI `list` is deterministic
 
-### CLI Tests
+### Ambiguity Coverage Tests (`tests/test_ambiguity_coverage.py`)
+- `required_ambiguous_cases(total)` tracks 20% of the suite with a floor of 5
+- A 60-case synthetic suite with only 5 ambiguous cases **fails**
+- A 60-case synthetic suite with 12 ambiguous cases passes
+- The error message states the ratio requirement
+
+### Agent-View / Anti-Leakage Tests (`tests/test_agent_view.py`)
+- The projection contains exactly the allowlisted keys
+- Every evaluator-only key is absent from the projection
+- `affected_services[].impact` and `evidence_catalog[].synthetic_fixture_note`
+  are dropped
+- No evaluator-only value reaches the projection (value-level scan)
+- An unclassified top-level key **fails closed** (`AgentViewError`)
+- Injected leaks are detected: ground-truth values in evidence summaries,
+  `must_not_claim` text in symptoms, remediation text in `environment`,
+  alternative-diagnosis text in a change summary
+- Allowlists match the schema properties (drift guard in both directions)
+
+### Execution Policy Tests (`tests/test_execution_policy.py`)
+- Every fixture step declares all four classification fields
+- No step mutates state automatically; no automated production mutation
+- Tools that imply mutation are never classified `read_only`
+- `staging_experiment` steps target staging/sandbox only
+- Negative cases: missing class, read-only mutation, automated mutation,
+  production experiment, misclassified mutating tool
+- JSON Schema rejects the same violations independently
+
+### CLI Tests (`tests/test_cli.py`)
 - `nexus-benchmark validate` exits 0 on success
 - `nexus-benchmark validate --case INC-XXX` works
 - `nexus-benchmark validate --case UNKNOWN` fails with clear error
 - `nexus-benchmark list` produces deterministic output
 - Output explicitly states validator does not evaluate AI quality
-
-### Benchmark Hygiene Tests
-- Ground truth separated from agent-visible evidence
-- Expected diagnosis evidence IDs exist in evidence catalog
-- Ambiguous cases have explicit ambiguity notes
-- Insufficient evidence cases have explicit notes
+- Asset resolution is independent of the working directory
+- `NEXUS_BENCHMARKS_DIR` override works and a broken override is rejected
+- **Installed-executable smoke tests** run `--help`, `list` and `validate` as
+  a subprocess from a directory outside the repository
+- The `[project.scripts]` target exists and is callable
 
 ---
 
@@ -107,9 +139,24 @@ def evaluate_case(case, agent):
 ```
 
 ### Anti-Leakage Checks (CI)
-- `ground_truth` keys not present in `evidence_catalog` summaries
+
+Implemented as an allowlisted projection, not a blocklist — see
+[ADR-0010](../decisions/ADR-0010-agent-view-projection.md).
+
+```python
+from nexus_benchmarks.agent_view import build_agent_view
+
+agent_input = build_agent_view(case)  # allowlist, fails closed
+ground_truth = case["ground_truth"]  # never passed to the agent
+score(evaluate(agent_input), ground_truth)
+```
+
+CI checks:
+- No evaluator-only key survives the projection
+- No evaluator-only value appears in the serialised projection
+- An unclassified top-level key aborts the projection
+- Injected leaks are detected (the tests are non-vacuous by construction)
 - `expected_diagnosis.must_not_claim` validated
-- No future commits/deployments in evidence catalog
 
 ---
 
@@ -197,12 +244,16 @@ def evaluate_case(case, agent):
 
 ### Phase 0 (Current)
 ```yaml
-- Install dependencies
+- Install dependencies (pip install -e ".[dev]" build)
 - Ruff format check
-- Ruff lint
-- Pytest (schema + CLI tests)
-- nexus-benchmark validate
+- Ruff lint                       # lint.ignore = []
+- Pytest (schema, ambiguity, agent-view, execution policy, CLI)
+- nexus-benchmark --help / list / validate      # installed console script
+- python -m build
+- ./scripts/wheel_smoke_test.sh   # wheel in a clean venv, outside the checkout
 ```
+Runs on Python 3.11 and 3.12, triggered by pushes and pull requests against
+`master`.
 
 ### Phase 1+ (Planned)
 ```yaml
@@ -231,8 +282,12 @@ def evaluate_case(case, agent):
 
 ```
 tests/
-├── test_schema_validation.py    # Schema + benchmark composition (Phase 0)
-├── test_cli.py                  # CLI tests (Phase 0)
+├── conftest.py                  # Shared fixtures (schemas, corpus)
+├── test_schema_validation.py    # Schema + fixtures + format + composition
+├── test_ambiguity_coverage.py   # 20% ambiguity ratio invariant
+├── test_agent_view.py           # Agent-visible / evaluator-only boundary
+├── test_execution_policy.py     # Verification-step execution classes
+├── test_cli.py                  # CLI + installed-executable smoke tests
 ├── unit/                        # Unit tests (Phase 1+)
 │   ├── test_intelligence.py
 │   ├── test_evidence_bundle.py

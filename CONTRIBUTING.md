@@ -16,7 +16,12 @@ pip install -e ".[dev]"
 uv sync --dev
 ```
 
-Lockfile: `uv.lock` (if using uv) or `requirements.txt` generated via `pip freeze`. The project uses a single `pyproject.toml` for all dependency metadata.
+**Lockfile: none is committed.** `pyproject.toml` declares minimum version
+bounds only (for example `jsonschema>=4.23.0`); it does not pin exact versions
+and there is no `uv.lock`, `requirements.txt` or `poetry.lock` in the
+repository. Repeatable installs are therefore *not* guaranteed today. Adopting
+a lockfile and installing with `--require-hashes` / `uv sync --locked` is a
+tracked Phase 1 follow-up (see [SECURITY.md](SECURITY.md#supply-chain)).
 
 ## Running Checks
 
@@ -39,6 +44,11 @@ pytest
 nexus-benchmark validate
 ```
 
+# Packaging: build a wheel, install it in a clean environment and run the CLI
+# from a directory outside the checkout
+./scripts/wheel_smoke_test.sh
+```
+
 CI runs the same commands. Do not skip checks locally.
 
 ## File & Schema Conventions
@@ -49,8 +59,43 @@ CI runs the same commands. Do not skip checks locally.
 - Must validate against `benchmarks/schema/incident-case.schema.json`
 - `case_id` must match filename prefix (`INC-XXX`)
 - `schema_version` must be current (see schema)
-- All timestamps: ISO 8601 with explicit timezone (e.g., `2024-01-15T10:30:00Z`)
-- Ground truth separated from agent-visible evidence
+- All timestamps: ISO 8601 UTC (`2024-01-15T10:30:00Z`). They are really
+  validated — `rfc3339-validator` is a runtime dependency and the CLI enables
+  `jsonschema.FormatChecker`.
+- Identifiers are **stable slugs**, not UUIDs: services match
+  `^svc-[a-z0-9]+(?:-[a-z0-9]+)*$` (e.g. `svc-001-payment`), environments match
+  `^env-[a-z0-9]+(?:-[a-z0-9]+)*$` (e.g. `env-prod-us-east-1`).
+- Ground truth is kept out of the agent-visible projection — see below.
+
+### Agent-Visible vs Evaluator-Only Data
+
+An incident case file deliberately mixes two audiences. Only the allowlist in
+`src/nexus_benchmarks/agent_view.py` (`AGENT_VISIBLE_ROOT_KEYS` plus the
+per-object allowlists) may be shown to an investigator:
+
+| Agent-visible | Evaluator-only (never shown) |
+|---------------|------------------------------|
+| `schema_version`, `case_id`, `environment`, `incident_window`, `initial_symptoms`, `affected_services` (`service_id`, `service_name` only), `evidence_catalog` (minus `synthetic_fixture_note`), `changes` | `title`, `category`, `scenario_type`, `difficulty`, `description`, `ground_truth`, `expected_diagnosis`, `misleading_or_confounding_signals`, `acceptable_alternatives`, `required_checks`, `remediation_guidance`, `tags` |
+
+The projection **fails closed**: an unclassified top-level key aborts the
+projection instead of being forwarded. `tests/test_agent_view.py` pins this
+boundary and proves it is non-vacuous by injecting leaks.
+
+### Verification Steps (`required_checks[]`)
+
+Every entry must declare `execution_class`, `target_environment`,
+`mutates_state` and `automated_execution_allowed`:
+
+| `execution_class` | Meaning | `mutates_state` | `automated_execution_allowed` | `target_environment` |
+|-------------------|---------|-----------------|-------------------------------|----------------------|
+| `read_only` | Observation only | `false` | `true` | any |
+| `staging_experiment` | Proposed controlled experiment | `true` | `false` | `staging` / `sandbox` |
+| `human_approval_required` | Needs an explicit human gate | `true` | `false` | any |
+
+A tool whose name implies mutation (`toggle_feature_flag`,
+`execute_db_command`, `cache_warmup`, ...) may never be classified
+`read_only`. The registry lives in `src/nexus_benchmarks/execution_policy.py`
+and is enforced by `nexus-benchmark validate`.
 
 ### Adding a New Incident Case
 
@@ -58,8 +103,11 @@ CI runs the same commands. Do not skip checks locally.
 2. Assign next sequential `INC-XXX` ID
 3. Fill all required fields per schema
 4. Ensure `scenario_type` is accurate (`single_cause`, `multi_factor`, `ambiguous`, `insufficient_evidence`)
-5. Run `nexus-benchmark validate` — must pass
-6. Run `pytest` — all tests must pass
+5. Classify every `required_checks[]` entry (see the table above)
+6. Keep at least 20% of the suite ambiguous/insufficient-evidence — the CLI
+   enforces the ratio over the whole benchmark, not a fixed count of five
+7. Run `nexus-benchmark validate` — must pass
+8. Run `pytest` — all tests must pass
 
 ### Modifying an Existing Case
 

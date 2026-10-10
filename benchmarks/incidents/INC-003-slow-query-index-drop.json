@@ -184,6 +184,10 @@
       "description": "Run EXPLAIN ANALYZE on affected query",
       "tool": "query_database",
       "expected_outcome": "Shows Seq Scan instead of Index Scan",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
@@ -191,6 +195,10 @@
       "description": "Verify idx_users_email exists",
       "tool": "query_database",
       "expected_outcome": "Index missing from pg_indexes",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
@@ -198,6 +206,10 @@
       "description": "Check migration script for DROP INDEX",
       "tool": "get_commit",
       "expected_outcome": "Migration contains DROP INDEX idx_users_email",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     }
   ],

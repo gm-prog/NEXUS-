@@ -183,6 +183,10 @@
       "description": "Verify stack trace points to PaymentService.charge line 142",
       "tool": "get_trace",
       "expected_outcome": "Trace shows error at PaymentService.charge:142",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
@@ -190,6 +194,10 @@
       "description": "Confirm deployment occurred before incident start",
       "tool": "get_deployment",
       "expected_outcome": "Deployment at 09:55 UTC, incident at 10:00 UTC",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
@@ -197,6 +205,10 @@
       "description": "Examine commit diff for missing null check",
       "tool": "get_commit",
       "expected_outcome": "Diff shows billing_address validation without null guard",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     }
   ],

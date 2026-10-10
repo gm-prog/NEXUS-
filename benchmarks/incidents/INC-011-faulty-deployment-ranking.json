@@ -179,6 +179,10 @@
       "description": "Inspect ranking formula in deployed code",
       "tool": "get_commit",
       "expected_outcome": "Formula shows multiplication: base * personalization",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
@@ -186,6 +190,10 @@
       "description": "Check actual ranking scores in traces",
       "tool": "get_trace",
       "expected_outcome": "Scores near 0.001 instead of 0.5-1.0",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     }
   ],

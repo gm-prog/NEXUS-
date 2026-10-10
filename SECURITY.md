@@ -33,6 +33,14 @@ Key principles:
 
 ## Supply Chain
 
-- Dependencies pinned in `pyproject.toml` / lockfile
-- CI installs from trusted indexes only
-- No arbitrary code execution from benchmark fixtures (they are data, not code)
+- **No lockfile is committed.** `pyproject.toml` declares *minimum* version
+  bounds only (for example `jsonschema>=4.23.0`), so two installs a week apart
+  can resolve different versions. This is a known gap, not a pinned supply
+  chain.
+- `rfc3339-validator` is a declared runtime dependency because `jsonschema`
+  only enforces `format: date-time` when a `FormatChecker` backend is present.
+- CI installs from PyPI with `pip` and does not use hash checking.
+- No arbitrary code execution from benchmark fixtures (they are data, not code).
+- Tracked follow-up: adopt a lockfile (uv or pip-compile) and install with
+  `--require-hashes` or `uv sync --locked` before Phase 1. See
+  [CONTRIBUTING.md](CONTRIBUTING.md).

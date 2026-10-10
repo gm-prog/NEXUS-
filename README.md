@@ -110,17 +110,23 @@ NEXUS does not claim to be an all-knowing autonomous SRE. The design favors expl
 |-----------|--------|
 | Architecture documentation | ✅ IMPLEMENTED |
 | Benchmark schemas (JSON Schema) | ✅ IMPLEMENTED |
-| 20+ incident scenario fixtures | ✅ IMPLEMENTED |
-| Validation CLI (`nexus-benchmark`) | ✅ IMPLEMENTED |
-| Automated tests (pytest) | ✅ IMPLEMENTED |
+| 21 incident scenario fixtures | ✅ IMPLEMENTED |
+| Validation CLI (`nexus-benchmark`) | ✅ IMPLEMENTED (installed console script) |
+| Agent-view / ground-truth separation | ✅ IMPLEMENTED (allowlisted projection, tested) |
+| Verification-step execution policy | ✅ IMPLEMENTED (`read_only` / `staging_experiment` / `human_approval_required`) |
+| Automated tests (pytest) | ✅ IMPLEMENTED (113 tests) |
 | Linting/formatting (Ruff) | ✅ IMPLEMENTED |
-| CI (GitHub Actions) | ✅ IMPLEMENTED |
+| CI (GitHub Actions) | ✅ IMPLEMENTED (triggers on `master`) |
+| Dependency lockfile | ❌ NOT PRESENT — minimum version bounds only |
 | Telemetry ingestion pipeline | ❌ PLANNED (Phase 1+) |
 | AI investigation agent | ❌ PLANNED (Phase 4+) |
 | UI / Dashboard | ❌ PLANNED (Phase 3+) |
 | Database integrations | ❌ PLANNED (Phase 2+) |
 | Remediation sandbox | ❌ PLANNED (Phase 7+) |
 | GitHub App integration | ❌ PLANNED (Phase 8+) |
+
+For the commands that were actually executed and their results, see
+[Phase 0 Status](docs/development/phase-0-status.md).
 
 ## Quick Start
 
@@ -155,6 +161,11 @@ nexus-benchmark validate
 nexus-benchmark validate --case INC-001
 ```
 
+`validate` checks schema compliance (with `date-time`/`uuid` format checking
+enabled), cross-file composition, the ambiguity-coverage ratio, the execution
+policy of every verification step, and that ground truth cannot reach the
+agent-visible projection. It does **not** evaluate AI diagnosis quality.
+
 ### Run Tests & Checks
 
 ```bash
@@ -167,6 +178,22 @@ pytest --cov=nexus_benchmarks
 # Lint and format check
 ruff check .
 ruff format --check .
+
+# Build a wheel, install it in a clean environment and run the CLI from a
+# directory outside the checkout
+./scripts/wheel_smoke_test.sh
+```
+
+### Command Contract
+
+`nexus-benchmark` is installed as a real console script
+(`nexus_benchmarks.cli:main`). The benchmark schemas and fixtures ship inside
+the wheel, so all three commands work from any directory:
+
+```bash
+nexus-benchmark --help
+nexus-benchmark list
+nexus-benchmark validate
 ```
 
 ## Documentation
@@ -188,6 +215,8 @@ ruff format --check .
 
 ## Non-Goals / Current Limitations
 
+- No lockfile: dependencies are minimum version bounds only, so installs are not
+  byte-for-byte reproducible
 - No telemetry collection, processing, or storage
 - No AI model integration or agent framework
 - No UI, dashboard, or API server
@@ -201,4 +230,4 @@ ruff format --check .
 
 ## License
 
-MIT License — see [LICENSE](LICENSE) for details.
+MIT License — see [LICENSE](LICENSE).

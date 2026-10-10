@@ -208,6 +208,10 @@
       "description": "Verify auth service health independently",
       "tool": "get_dependency_status",
       "expected_outcome": "Auth service 0% availability; DB disk full",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
@@ -215,6 +219,10 @@
       "description": "Check circuit breaker configuration for auth calls",
       "tool": "get_config",
       "expected_outcome": "No circuit breakers enabled for auth-service",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
@@ -222,6 +230,10 @@
       "description": "Verify thread pool exhaustion across services",
       "tool": "query_metrics",
       "expected_outcome": "All downstream services at 100% thread pool usage",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     }
   ],

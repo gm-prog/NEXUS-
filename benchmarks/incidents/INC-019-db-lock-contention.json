@@ -167,13 +167,21 @@
       "description": "Check pg_stat_activity for long-running queries",
       "tool": "query_database",
       "expected_outcome": "Long-running SELECT on orders table from analytics-tool",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
       "check_id": "chk-002-kill-query",
-      "description": "Kill long-running query and observe recovery",
+      "description": "REMEDIATION ACTION, not an investigation query: terminate the long-running analytics SELECT that holds the lock. Requires explicit human authorization before it is performed in production; an autonomous agent may only propose it.",
       "tool": "execute_db_command",
-      "expected_outcome": "Deadlocks stop immediately after query killed",
+      "expected_outcome": "Deadlocks stop once the query is terminated",
+      "execution_class": "human_approval_required",
+      "target_environment": "production",
+      "mutates_state": true,
+      "automated_execution_allowed": false,
       "critical": true
     }
   ],

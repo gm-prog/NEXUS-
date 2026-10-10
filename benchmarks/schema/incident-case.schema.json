@@ -5,6 +5,28 @@
   "description": "Specification for a synthetic incident scenario used in benchmark evaluation. Contains both agent-visible evidence catalog and evaluator-only ground truth.",
   "type": "object",
   "additionalProperties": false,
+  "$defs": {
+    "service_id": {
+      "type": "string",
+      "pattern": "^svc-[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "description": "Stable, human-readable service slug (e.g. svc-001-payment). Deliberately NOT a UUID: identifiers must stay legible in evidence, runbooks and review output."
+    },
+    "environment_id": {
+      "type": "string",
+      "pattern": "^env-[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "description": "Stable, human-readable environment slug (e.g. env-prod-us-east-1)."
+    },
+    "execution_class": {
+      "type": "string",
+      "enum": ["read_only", "staging_experiment", "human_approval_required"],
+      "description": "Safety classification of the verification step. read_only = observation only; staging_experiment = mutating controlled experiment restricted to non-production; human_approval_required = mutating action that needs an explicit human authorization before it may run anywhere."
+    },
+    "target_environment": {
+      "type": "string",
+      "enum": ["production", "staging", "sandbox", "not_applicable"],
+      "description": "Environment the step would act on. Mutating automated steps may never target production."
+    }
+  },
   "required": [
     "schema_version",
     "case_id",
@@ -124,7 +146,7 @@
         "additionalProperties": false,
         "required": ["service_id", "service_name", "impact"],
         "properties": {
-          "service_id": { "type": "string", "format": "uuid" },
+          "service_id": { "$ref": "#/$defs/service_id" },
           "service_name": { "type": "string" },
           "impact": { "type": "string", "enum": ["primary", "secondary", "downstream", "upstream"] }
         }
@@ -146,8 +168,8 @@
           "collection_time": { "type": "string", "format": "date-time", "description": "When evidence was retrieved/recorded (UTC)" },
           "time_window_start": { "type": "string", "format": "date-time" },
           "time_window_end": { "type": "string", "format": "date-time" },
-          "service_id": { "type": "string", "format": "uuid" },
-          "environment_id": { "type": "string", "format": "uuid" },
+          "service_id": { "$ref": "#/$defs/service_id" },
+          "environment_id": { "$ref": "#/$defs/environment_id" },
           "summary": { "type": "string", "description": "Human-readable summary of the evidence" },
           "query_reference": { "type": "string", "description": "How to reproduce retrieval (SQL, API call, etc.)" },
           "data_provenance": { "type": "string", "enum": ["direct_observation", "derived_calculation", "model_inference", "manual_entry", "verification_result"] },
@@ -169,7 +191,7 @@
           "change_id": { "type": "string", "pattern": "^chg-[a-z0-9-]+$" },
           "change_type": { "type": "string", "enum": ["deployment", "config_change", "feature_flag", "dependency_update", "infrastructure"] },
           "timestamp": { "type": "string", "format": "date-time" },
-          "service_id": { "type": "string", "format": "uuid" },
+          "service_id": { "$ref": "#/$defs/service_id" },
           "summary": { "type": "string" },
           "details": { "type": "object" },
           "commit_sha": { "type": "string" },
@@ -184,7 +206,7 @@
       "required": ["root_cause_type", "ambiguity_note", "insufficient_evidence_note"],
       "properties": {
         "root_cause_type": { "type": "string", "enum": ["code_defect", "config_error", "dependency_failure", "resource_exhaustion", "capacity_limit", "design_flaw", "unknown", "ambiguous", "insufficient_evidence"] },
-        "primary_service_id": { "type": "string", "format": "uuid" },
+        "primary_service_id": { "$ref": "#/$defs/service_id" },
         "trigger_change_id": { "type": "string", "pattern": "^(chg-[a-z0-9-]+)?$" },
         "causal_chain": {
           "type": "array",
@@ -245,16 +267,85 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["check_id", "description", "tool", "expected_outcome"],
+        "required": [
+          "check_id",
+          "description",
+          "tool",
+          "expected_outcome",
+          "execution_class",
+          "target_environment",
+          "mutates_state",
+          "automated_execution_allowed"
+        ],
         "properties": {
           "check_id": { "type": "string", "pattern": "^chk-[a-z0-9-]+$" },
           "description": { "type": "string" },
           "tool": { "type": "string" },
           "expected_outcome": { "type": "string" },
+          "execution_class": { "$ref": "#/$defs/execution_class" },
+          "target_environment": { "$ref": "#/$defs/target_environment" },
+          "mutates_state": {
+            "type": "boolean",
+            "description": "True if performing this step changes the state of the target environment (config, data, traffic, process lifecycle)."
+          },
+          "automated_execution_allowed": {
+            "type": "boolean",
+            "description": "True only if an autonomous agent may perform this step without a human gate. Must be false for every mutating step."
+          },
           "critical": { "type": "boolean", "default": false }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": ["execution_class"],
+              "properties": { "execution_class": { "const": "read_only" } }
+            },
+            "then": {
+              "properties": {
+                "mutates_state": { "const": false },
+                "automated_execution_allowed": { "const": true }
+              }
+            }
+          },
+          {
+            "if": {
+              "required": ["execution_class"],
+              "properties": { "execution_class": { "const": "staging_experiment" } }
+            },
+            "then": {
+              "properties": {
+                "mutates_state": { "const": true },
+                "automated_execution_allowed": { "const": false },
+                "target_environment": { "enum": ["staging", "sandbox"] }
+              }
+            }
+          },
+          {
+            "if": {
+              "required": ["execution_class"],
+              "properties": { "execution_class": { "const": "human_approval_required" } }
+            },
+            "then": {
+              "properties": {
+                "mutates_state": { "const": true },
+                "automated_execution_allowed": { "const": false }
+              }
+            }
+          },
+          {
+            "if": {
+              "required": ["automated_execution_allowed"],
+              "properties": { "automated_execution_allowed": { "const": true } }
+            },
+            "then": {
+              "properties": {
+                "mutates_state": { "const": false }
+              }
+            }
+          }
+        ]
       },
-      "description": "Verification actions expected of a thorough investigation"
+      "description": "Verification actions expected of a thorough investigation. Every step declares an execution class: early investigation steps must be read_only, mutating steps are staging/labelled experiments or human-approval-gated and may never be executed automatically against production. The mapping from tool name to permitted execution classes is enforced by the validator (see src/nexus_benchmarks/execution_policy.py)."
     },
     "remediation_guidance": {
       "type": "object",

@@ -1,7 +1,7 @@
 # ADR-0007: Product Naming & Positioning
 
 - Status: Accepted
-- Date: 2024-01-15
+- Date: 2026-10-09
 
 ## Context
 
