@@ -90,6 +90,16 @@ def test_no_fixture_step_mutates_production_automatically(corpus):
             )
 
 
+def test_mutating_tools_are_never_classified_read_only(corpus):
+    """Retain the corpus-level name defence as well as registry assertions."""
+    for case in corpus:
+        for step in case["required_checks"]:
+            if is_mutating_tool(step["tool"]):
+                assert step["execution_class"] != READ_ONLY, (
+                    f"{case['case_id']}: {step['tool']} must not be read_only"
+                )
+
+
 def test_staging_experiments_target_non_production(corpus):
     for case in corpus:
         for step in case["required_checks"]:
@@ -120,11 +130,11 @@ def test_registry_and_fixtures_cover_the_same_tool_set(corpus):
     assert seen == set(TOOL_REGISTRY), "registry and fixtures must cover the same tool set"
 
 
-def test_every_registered_read_only_tool_is_accepted_as_read_only():
-    """Positive test: each registered read-only tool passes a well-formed step."""
-    for tool in sorted(registered_tools(ToolSideEffect.READ_ONLY)):
-        errors = check_execution_policy([case_with_steps("INC-900", valid_step(tool=tool))])
-        assert errors == [], f"{tool}: {errors}"
+@pytest.mark.parametrize("tool", sorted(registered_tools(ToolSideEffect.READ_ONLY)))
+def test_every_registered_read_only_tool_is_accepted_as_read_only(tool):
+    """Each of the 18 observation tools gets an independently reported positive test."""
+    errors = check_execution_policy([case_with_steps("INC-900", valid_step(tool=tool))])
+    assert errors == [], f"{tool}: {errors}"
 
 
 def test_every_registered_mutating_tool_is_rejected_as_read_only():
@@ -317,3 +327,44 @@ def test_schema_rejects_experiment_targeting_production(incident_schema, corpus)
         automated_execution_allowed=False,
     )
     assert list(validator.iter_errors(case))
+
+
+@pytest.mark.parametrize(
+    "execution_class", [READ_ONLY, STAGING_EXPERIMENT, HUMAN_APPROVAL_REQUIRED]
+)
+def test_unknown_tools_fail_closed_in_every_class(execution_class):
+    step = (
+        valid_step(tool="unknown_observation")
+        if execution_class == READ_ONLY
+        else mutating_step(tool="unknown_mutation", execution_class=execution_class)
+    )
+    errors = check_case_execution_policy(case_with_steps("INC-900", step))
+    assert any("not registered in TOOL_REGISTRY" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("execution_class", []),
+        ("execution_class", {}),
+        ("target_environment", []),
+        ("target_environment", {}),
+    ],
+)
+def test_malformed_policy_enum_shapes_are_controlled(field, value):
+    step = mutating_step(**{field: value})
+    errors = check_case_execution_policy(case_with_steps("INC-900", step))
+    assert errors and all(isinstance(error, str) for error in errors)
+
+
+@pytest.mark.parametrize(
+    "tool", ["set_feature_flag", "promote_deployment", "run_migration", "flip_switch"]
+)
+def test_installed_cli_rejects_a_new_tool_falsely_declared_read_only(run_cli, sample_case, tool):
+    sample_case["case_id"] = "INC-900"
+    sample_case["required_checks"][0]["tool"] = tool
+    result = run_cli({"INC-900-unsafe-tool.json": sample_case}, "--case", "INC-900")
+    output = result.stdout + result.stderr
+    assert result.returncode == 1, output
+    assert tool in output and "not registered in TOOL_REGISTRY" in output
+    assert "Traceback" not in output

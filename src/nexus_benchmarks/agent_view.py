@@ -20,8 +20,13 @@ either way aborts the projection instead of being silently forwarded.
 import json
 from copy import deepcopy
 
-from nexus_benchmarks.errors import AgentViewError, MalformedCaseError
-from nexus_benchmarks.temporal import try_parse_instant
+from nexus_benchmarks.errors import (
+    AgentViewError,
+    MalformedCaseError,
+    NexusBenchmarkError,
+    TemporalIntegrityError,
+)
+from nexus_benchmarks.temporal import check_case_temporal_integrity, check_visible_time_literals
 
 #: Top-level keys an agent is allowed to see.
 AGENT_VISIBLE_ROOT_KEYS: frozenset[str] = frozenset({
@@ -61,7 +66,7 @@ EVALUATOR_ONLY_ROOT_KEYS: frozenset[str] = frozenset({
 #: infrastructure metadata for fixture authors, not incident evidence.
 AGENT_VISIBLE_NESTED_KEYS: dict[str, frozenset[str]] = {
     "environment": frozenset({"name", "region", "cluster"}),
-    "incident_window": frozenset({"start", "end", "investigation_cutoff"}),
+    "incident_window": frozenset({"start", "investigation_cutoff"}),
     "affected_services": frozenset({"service_id", "service_name"}),
     "changes": frozenset({
         "change_id",
@@ -93,18 +98,14 @@ AGENT_VISIBLE_NESTED_KEYS: dict[str, frozenset[str]] = {
     }),
 }
 
-#: Keys dropped from the agent view unless a runtime condition proves they are
-#: safe to forward.
-#:
-#: ``incident_window.end`` records when the incident was resolved or the
-#: observation ended. In every current fixture it is later than
-#: ``investigation_cutoff``, so it is future knowledge about an incident that
-#: is still open at the moment of investigation. It is forwarded only when it
-#: is parsed as an instant at or before the cutoff; if either timestamp cannot
-#: be parsed it is dropped, because "cannot prove it is past" must not become
-#: "assume it is past".
-CONDITIONALLY_EXCLUDED_KEYS: dict[str, frozenset[str]] = {
+#: Nested schema properties that are intentionally never model-visible.
+#: ``end`` is resolution/observation metadata, not the frozen input boundary.
+#: Keeping it evaluator-only even for a resolved incident avoids a conditional
+#: answer signal and makes the allowlist/schema drift guard explicit.
+EVALUATOR_ONLY_NESTED_KEYS: dict[str, frozenset[str]] = {
     "incident_window": frozenset({"end"}),
+    "affected_services": frozenset({"impact"}),
+    "evidence_catalog": frozenset({"synthetic_fixture_note"}),
 }
 
 #: Allowlisted nested fields that hold a single object rather than an array.
@@ -120,7 +121,10 @@ def build_agent_view(case: dict) -> dict:
     """Return the agent-visible projection of ``case``.
 
     Raises:
-        AgentViewError: if ``case`` contains an unclassified top-level key.
+        AgentViewError: an unclassified top-level key.
+        MalformedCaseError: a projected field has an invalid shape.
+        TemporalIntegrityError: missing, malformed, reversed or future-dated
+            timestamps. Future evidence is rejected, not silently filtered.
     """
     if not isinstance(case, dict):
         raise MalformedCaseError.case_not_an_object(case)
@@ -129,40 +133,30 @@ def build_agent_view(case: dict) -> dict:
     if unknown:
         raise AgentViewError(str(case.get("case_id", "<unknown case>")), unknown)
 
+    violations = check_case_temporal_integrity(case)
+    if violations:
+        raise TemporalIntegrityError(violations)
+
     view: dict = {}
     for key, value in case.items():
         if key not in AGENT_VISIBLE_ROOT_KEYS:
             continue
         allowed = AGENT_VISIBLE_NESTED_KEYS.get(key)
         view[key] = _project(case.get("case_id", "<unknown case>"), key, value, allowed)
-    _drop_future_window_end(case, view)
+    violations = check_visible_time_literals(view)
+    if violations:
+        raise TemporalIntegrityError(violations)
     return view
-
-
-def _drop_future_window_end(case: dict, view: dict) -> None:
-    """Remove ``incident_window.end`` unless it is provably at/before the cutoff."""
-    window = case.get("incident_window")
-    projected = view.get("incident_window")
-    if not isinstance(window, dict) or not isinstance(projected, dict):
-        return
-    if "end" not in projected:
-        return
-
-    cutoff = try_parse_instant(window.get("investigation_cutoff"))
-    end = try_parse_instant(window.get("end"))
-    if cutoff is None or end is None or end > cutoff:
-        del projected["end"]
 
 
 def _project(case_id: object, key: str, value: object, allowed: frozenset[str] | None) -> object:
     """Project one agent-visible field, reporting malformed shapes, not crashing."""
     if allowed is None:
         return deepcopy(value)
-    if isinstance(value, dict):
-        return {name: deepcopy(item) for name, item in value.items() if name in allowed}
-
     if key in NESTED_OBJECT_KEYS:
-        raise MalformedCaseError.wrong_type(case_id, key, "an object", value)
+        if not isinstance(value, dict):
+            raise MalformedCaseError.wrong_type(case_id, key, "an object", value)
+        return {name: deepcopy(item) for name, item in value.items() if name in allowed}
     if not isinstance(value, list):
         raise MalformedCaseError.wrong_type(case_id, key, "an array", value)
 
@@ -214,7 +208,8 @@ def _ground_truth_values(ground_truth: dict) -> list[tuple[str, str]]:
 def _diagnosis_values(expected_diagnosis: dict) -> list[tuple[str, str]]:
     return [
         (f"expected_diagnosis.must_not_claim[{index}]", claim)
-        for index, claim in enumerate(expected_diagnosis.get("must_not_claim", []))
+        for index, claim in enumerate(_as_list(expected_diagnosis.get("must_not_claim")))
+        if isinstance(claim, str)
     ]
 
 
@@ -279,8 +274,8 @@ def find_leaks(case: dict) -> list[str]:
     case_id = str(case.get("case_id", "<unknown case>"))
     try:
         view = build_agent_view(case)
-    except (AgentViewError, MalformedCaseError) as error:
-        # Both error types already prefix the case id.
+    except NexusBenchmarkError as error:
+        # Projection and temporal errors already identify the case/field.
         return [error.message]
 
     findings = [

@@ -20,21 +20,30 @@ Evaluation integrity requires that the investigator sees only information availa
 
 2. **Evaluator implementation** (future):
    - Loads `ground_truth` separately
-   - Constructs agent input from `evidence_catalog` + `incident_window` only
+   - Uses `build_agent_view(case)`; never forwards the raw case/window
+   - `incident_window.end` stays evaluator-only (ADR-0012)
    - Never passes `ground_truth` fields to agent
    - Compares agent output against `ground_truth` after run completes
 
 3. **CI Enforcement** (Phase 0):
-   - `nexus-benchmark validate` checks schema compliance
-   - Future: Add check that `ground_truth` keys don't appear in `evidence_catalog` summaries
+   - `nexus-benchmark validate` checks schema, tool policy, temporal cutoff and
+     agent-view separation; injected-leak tests prove the boundary is non-vacuous
+   - Arbitrary prose/causal realism still needs fixture-author review
 
 ### Scenario Time Travel
 
 Each scenario defines:
-- `incident_window.start` / `incident_window.end` — When symptoms occurred
-- `investigation_cutoff` — When investigation begins (typically `incident_window.end` + small buffer)
-- Evidence in `evidence_catalog` must have `event_time` ≤ `investigation_cutoff`
-- Deployments/commits after cutoff are excluded
+- `incident_window.start` — Symptom onset, at/before the investigation cutoff
+- `incident_window.end` — Evaluator-only resolution/observation completion
+- `investigation_cutoff` — Frozen boundary when investigation begins; it may be
+  **before** the eventual incident end (all 21 original cases do this)
+- Evidence event **and collection** times and both optional interval endpoints
+  must be at/before cutoff. Future records/changes are rejected, not filtered
+- All typed time comparisons use timezone-aware RFC 3339 instants in UTC
+
+The earlier "end + small buffer" example contradicted the in-flight fixtures.
+[ADR-0012](ADR-0012-temporal-cutoff-integrity.md) clarifies the boundary and the
+validator/projection checks without changing original synthetic timestamps.
 
 ## Alternatives Considered
 
@@ -47,10 +56,10 @@ Each scenario defines:
 ## Trade-offs and Consequences
 
 **Pros:**
-- Guarantees no leakage by construction
+- Enforces a tested field/typed-time boundary; opaque prose still needs review
 - Clear mental model for fixture authors
 - Evaluator implementation straightforward
-- Benchmark scores reflect true investigative ability
+- Designed to prevent future/answer metadata from contaminating future scores
 
 **Cons:**
 - Fixture authoring requires discipline (two mindsets: scenario designer vs. evaluator)
@@ -58,5 +67,7 @@ Each scenario defines:
 
 ## Validation / Reversal Criteria
 
-- **Validate:** Manual audit of 5 random fixtures confirms no ground truth in evidence catalog; evaluator integration test passes with mocked agent
+- **Validate:** All current fixtures pass typed-time and allowlist checks;
+  negative temporal/injected-leak tests fail closed. A future real evaluator
+  must retain that boundary; no evaluator accuracy has been measured in Phase 0
 - **Reverse if:** Fixture authoring becomes bottleneck; consider tooling to generate evidence_catalog from ground_truth + simulation

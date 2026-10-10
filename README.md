@@ -110,14 +110,14 @@ NEXUS does not claim to be an all-knowing autonomous SRE. The design favors expl
 |-----------|--------|
 | Architecture documentation | ✅ IMPLEMENTED |
 | Benchmark schemas (JSON Schema) | ✅ IMPLEMENTED |
-| 21 incident scenario fixtures | ✅ IMPLEMENTED |
+| 22 incident scenario fixtures | ✅ IMPLEMENTED |
 | Validation CLI (`nexus-benchmark`) | ✅ IMPLEMENTED (installed console script) |
 | Agent-view / ground-truth separation | ✅ IMPLEMENTED (allowlisted projection + temporal cutoff, tested) |
 | Verification-step execution policy | ✅ IMPLEMENTED (`read_only` / `staging_experiment` / `human_approval_required`, registered-tool allowlist) |
-| Automated tests (pytest) | ✅ IMPLEMENTED (218 tests) |
+| Automated tests (pytest) | ✅ LOCALLY VERIFIED (345 tests; see status report for hosted evidence) |
 | Linting/formatting (Ruff) | ✅ IMPLEMENTED |
 | CI (GitHub Actions) | ✅ IMPLEMENTED (triggers on `master`) |
-| Dependency lockfile | ❌ NOT PRESENT — minimum version bounds only |
+| Dependency lockfile | ❌ NOT PRESENT — pre-Phase-1 prerequisite; minimum bounds only |
 | Telemetry ingestion pipeline | ❌ PLANNED (Phase 1+) |
 | AI investigation agent | ❌ PLANNED (Phase 4+) |
 | UI / Dashboard | ❌ PLANNED (Phase 3+) |
@@ -127,6 +127,11 @@ NEXUS does not claim to be an all-knowing autonomous SRE. The design favors expl
 
 For the commands that were actually executed and their results, see
 [Phase 0 Status](docs/development/phase-0-status.md).
+
+**Readiness:** Phase 0 correction is not permission to start Phase 1. The
+[status report](docs/development/phase-0-status.md) separates executed local
+checks from observed hosted checks and records remaining fixture-semantic and
+pre-Phase-1 prerequisites. No diagnosis-accuracy result is claimed.
 
 ## Quick Start
 
@@ -139,8 +144,8 @@ For the commands that were actually executed and their results, see
 
 ```bash
 # Clone and enter repository
-git clone <repository-url>
-cd nexus
+git clone https://github.com/gm-prog/NEXUS-.git
+cd NEXUS-
 
 # Install with dev dependencies
 pip install -e ".[dev]"
@@ -163,8 +168,11 @@ nexus-benchmark validate --case INC-001
 
 `validate` checks schema compliance (with `date-time`/`uuid` format checking
 enabled), cross-file composition, the ambiguity-coverage ratio, the execution
-policy of every verification step, and that ground truth cannot reach the
-agent-visible projection. It does **not** evaluate AI diagnosis quality.
+metadata policy of every verification step, the temporal cutoff of every typed
+investigation timestamp, and a tested allowlist excluding evaluator-only fields
+(including `incident_window.end`). Future/malformed evidence is rejected, not
+filtered. Schema-invalid cases have dependent checks explicitly marked NOT RUN.
+This is fixture validation, not runtime authorization or AI diagnosis evaluation.
 
 ### Run Tests & Checks
 
@@ -216,9 +224,11 @@ nexus-benchmark validate
 ## Non-Goals / Current Limitations
 
 - No lockfile: dependencies are minimum version bounds only, so installs are not
-  byte-for-byte reproducible
+  byte-for-byte reproducible. A reviewed lockfile and enforced locked/hashed
+  installs are required **before Phase 1 begins** (owner: NEXUS maintainers)
 - No telemetry collection, processing, or storage
-- No AI model integration or agent framework
+- No AI model integration or agent framework; no benchmark diagnosis accuracy has
+  been measured. Passing validation establishes fixture/schema hygiene only
 - No UI, dashboard, or API server
 - No database (PostgreSQL, Redis, ClickHouse, etc.)
 - No message queue (Kafka, etc.)

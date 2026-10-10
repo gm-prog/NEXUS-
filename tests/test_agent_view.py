@@ -12,7 +12,7 @@ import pytest
 from nexus_benchmarks.agent_view import (
     AGENT_VISIBLE_NESTED_KEYS,
     AGENT_VISIBLE_ROOT_KEYS,
-    CONDITIONALLY_EXCLUDED_KEYS,
+    EVALUATOR_ONLY_NESTED_KEYS,
     EVALUATOR_ONLY_ROOT_KEYS,
     build_agent_view,
     evaluator_only_values,
@@ -118,7 +118,9 @@ def test_remediation_guidance_injected_into_environment_is_detected(corpus):
 
 
 def test_acceptable_alternative_injected_into_a_change_summary_is_detected(corpus):
-    case = next(c for c in corpus if c["acceptable_alternatives"])
+    # INC-013 no longer has hypothetical alternatives; choose a case with an
+    # actual change to inject into, without weakening the leakage assertion.
+    case = next(c for c in corpus if c["acceptable_alternatives"] and c["changes"])
     case = deepcopy(case)
     case["changes"][0]["summary"] = case["acceptable_alternatives"][0]["description"]
     assert find_leaks(case)
@@ -148,22 +150,12 @@ def test_allowlists_match_the_schema(incident_schema):
         spec = incident_schema["properties"][name]
         declared = set((spec.get("items") or spec)["properties"])
         assert allowed <= declared, f"{name}: allowlist cites unknown properties"
-        if name == "evidence_catalog":
-            # synthetic_fixture_note is benchmark infrastructure, not evidence.
-            assert declared - allowed == {"synthetic_fixture_note"}
-        elif name == "affected_services":
-            # impact encodes the localisation answer.
-            assert declared - allowed == {"impact"}
-        else:
-            assert declared - allowed == set(), f"{name}: unclassified nested properties"
+        excluded = EVALUATOR_ONLY_NESTED_KEYS.get(name, frozenset())
+        assert not allowed & excluded, f"{name}: a property cannot be both visible and excluded"
+        assert declared == allowed | excluded, f"{name}: unclassified nested properties"
 
 
-def test_conditionally_excluded_keys_are_subsets_of_the_allowlist(incident_schema):
-    """A conditional exclusion may only narrow an already-allowlisted field."""
-    for name, excluded in CONDITIONALLY_EXCLUDED_KEYS.items():
-        assert name in AGENT_VISIBLE_NESTED_KEYS, f"{name}: not an allowlisted object field"
-        spec = incident_schema["properties"][name]
-        declared = set((spec.get("items") or spec)["properties"])
-        assert excluded <= declared, f"{name}: excludes a property the schema omits"
-        assert excluded <= AGENT_VISIBLE_NESTED_KEYS[name], f"{name}: unknown excluded keys"
-        assert excluded, f"{name}: empty exclusion set is misleading"
+def test_resolution_time_is_intentionally_excluded_from_schema_projection():
+    """Explicitly classify end; do not loosen the drift guard for all nested fields."""
+    assert EVALUATOR_ONLY_NESTED_KEYS["incident_window"] == {"end"}
+    assert AGENT_VISIBLE_NESTED_KEYS["incident_window"] == {"start", "investigation_cutoff"}

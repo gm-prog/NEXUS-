@@ -55,18 +55,13 @@ def _locate_console_script() -> str | None:
     running pytest so subprocess tests also work when the virtualenv is not on
     ``PATH``.
     """
-    found = shutil.which("nexus-benchmark")
-    if found:
-        return found
     candidate = Path(sys.executable).parent / "nexus-benchmark"
-    return str(candidate) if candidate.is_file() else None
+    if candidate.is_file():
+        return str(candidate)
+    return shutil.which("nexus-benchmark")
 
 
 INSTALLER = _locate_console_script()
-
-needs_installed_cli = pytest.mark.skipif(
-    INSTALLER is None, reason="nexus-benchmark is not installed on PATH"
-)
 
 
 class BenchmarkWorkspace:
@@ -110,8 +105,7 @@ def run_cli(tmp_path):
     """Run the installed console script against a throwaway benchmarks tree."""
 
     def _run(cases: dict[str, object], *args: str) -> subprocess.CompletedProcess:
-        if INSTALLER is None:
-            pytest.skip("nexus-benchmark is not installed on PATH")
+        assert INSTALLER is not None, 'Install the CLI first: python -m pip install -e ".[dev]"'
         root = tmp_path / "benchmarks"
         shutil.copytree(SCHEMA_DIR, root / "schema")
         incidents = root / "incidents"

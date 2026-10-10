@@ -174,7 +174,7 @@ def _check_step(case_id: str, index: int, step: dict) -> list[str]:
     if not isinstance(tool, str) or not tool:
         errors.append(f"{where}: tool must be a non-empty string")
         return errors
-    if execution_class not in EXECUTION_CLASSES:
+    if not isinstance(execution_class, str) or execution_class not in EXECUTION_CLASSES:
         return [f"{where}: missing or unknown execution_class {execution_class!r}"]
 
     registered = classify_tool(tool)
@@ -196,6 +196,9 @@ def _check_step(case_id: str, index: int, step: dict) -> list[str]:
             f"{where}: tool {tool!r} is registered read-only but its name implies mutation — "
             "the registry entry is wrong"
         )
+
+    if not isinstance(environment, str) or environment not in TARGET_ENVIRONMENTS:
+        errors.append(f"{where}: missing or unknown target_environment {environment!r}")
 
     if mutates_state and automated:
         errors.append(f"{where}: mutating step must not allow automated execution")
@@ -222,7 +225,7 @@ def _check_staging_experiment(
     where: str, environment: object, mutates_state: object, automated: object
 ) -> list[str]:
     errors = []
-    if environment not in NON_PRODUCTION_ENVIRONMENTS:
+    if not isinstance(environment, str) or environment not in NON_PRODUCTION_ENVIRONMENTS:
         errors.append(
             f"{where}: staging_experiment must target staging or sandbox, not {environment!r}"
         )

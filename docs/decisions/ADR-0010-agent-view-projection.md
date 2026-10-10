@@ -33,7 +33,7 @@ Allowed at the top level:
 `schema_version`, `case_id`, `environment`, `incident_window`,
 `initial_symptoms`, `affected_services`, `evidence_catalog`, `changes`.
 
-Everything else is evaluator-only and never forwarded. Two nested fields are
+Everything else is evaluator-only and never forwarded. Three nested fields are
 additionally dropped because they carry answer signal or benchmark
 infrastructure:
 
@@ -42,12 +42,21 @@ infrastructure:
   exists to measure.
 - `evidence_catalog[].synthetic_fixture_note` — fixture-authoring metadata, not
   incident evidence.
+- `incident_window.end` — eventual resolution/observation metadata. It is
+  **always** excluded, even when before the cutoff; see
+  [ADR-0012](ADR-0012-temporal-cutoff-integrity.md).
 
 **The projection fails closed.** An unclassified top-level key raises
 `AgentViewError` rather than being silently forwarded, so adding a field to the
 schema forces an explicit decision. `tests/test_agent_view.py` asserts the
 allowlists match the schema properties exactly, which catches drift in both
 directions.
+
+Before projection, typed timestamps must pass fail-closed temporal validation:
+malformed/naive values, future evidence/changes and reversed windows raise
+`TemporalIntegrityError`. This also protects direct callers who skip CLI schema
+validation. Schema-invalid cases are diagnosed and dependent checks marked NOT
+RUN in the CLI, rather than being fed to policy helpers.
 
 Leak detection combines two independent checks:
 

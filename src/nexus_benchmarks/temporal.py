@@ -1,114 +1,109 @@
-"""Temporal integrity of the agent-visible part of a benchmark case.
+"""Fail-closed temporal validation for frozen investigation snapshots.
 
-The frozen-snapshot contract (``docs/architecture/evidence-model.md``,
-``docs/development/testing-strategy.md``) says an investigator may only see
-what was known at ``incident_window.investigation_cutoff``.
+The typed timestamps the investigator can see must be valid timezone-aware
+RFC 3339 instants at or before ``incident_window.investigation_cutoff``.
+Future evidence is rejected, not silently filtered: ``evidence_catalog`` and
+``changes`` describe inputs available to the investigator, not future records.
 
-A case file nevertheless records the *whole* incident, including
-``incident_window.end`` — the time the incident was resolved or observation
-ended — which in every current fixture is **after** the cutoff. Forwarding it
-hands the investigator the future: the length and eventual resolution of an
-incident that is still open at the moment of investigation.
+``incident_window.end`` is evaluator-only metadata and never projected, even
+when it happens to be before the cutoff. It is still checked for a valid format
+and a coherent incident window. All existing fixture timestamps are preserved.
 
-Two consequences, both implemented here:
-
-1. ``incident_window.end`` is evaluator-side metadata whenever it is later than
-   the cutoff. :func:`nexus_benchmarks.agent_view.build_agent_view` drops it in
-   that case (see ``CONDITIONALLY_EXCLUDED_KEYS``).
-2. No agent-visible record may be dated after the cutoff. That is enforced as a
-   corpus invariant by :func:`check_temporal_integrity`, not left to fixture
-   authors.
-
-Timestamps are parsed as timezone-aware RFC 3339 instants and compared as
-instants. They are never compared lexicographically, and a naive timestamp
-(no offset) is rejected rather than assumed to be UTC.
-
-This module is deliberately tolerant of malformed *structures*: a structurally
-invalid case produces a controlled error string, never an exception, so the
-validator can report every problem in a fixture in one pass. Malformed
-*timestamp strings* are reported by the schema layer (``format: date-time``)
-and skipped here, so the same defect is not reported twice.
+Malformed timestamps are errors here as well as in JSON Schema. Direct callers
+of the projection must not be able to bypass the cutoff by omitting the CLI's
+schema-validation step. Instants are normalised to UTC and compared with exact
+fractional-second precision (``datetime`` alone silently truncates after six
+fractional digits).
 """
 
 import re
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+
+from rfc3339_validator import validate_rfc3339
 
 from nexus_benchmarks.errors import MalformedCaseError
 
-#: Strict RFC 3339 date-time: a ``T`` separator and a numeric offset or ``Z``
-#: are both mandatory. A naive timestamp is rejected rather than silently
-#: assumed to be UTC, and the space separator permitted only by the RFC's
-#: NOTE (§5.6, "by mutual agreement") is rejected too.
-RFC3339_PATTERN = re.compile(
-    r"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$"
+# Full-match, ASCII-only, mandatory offset. RFC 3339 permits lowercase t/z;
+# normalise those before passing the value to the RFC 3339 backend.
+_RFC3339_SHAPE = re.compile(
+    r"(?P<whole>[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2})"
+    r"(?P<fraction>\.[0-9]+)?(?P<zone>[Zz]|[+-][0-9]{2}:[0-9]{2})"
 )
+
+# A schema/projection drift test enumerates all declared date-time fields and
+# requires an explicit disposition. Opaque prose/config values still need
+# author review; adding a new typed timestamp requires extending this contract.
+CUTOFF_TIMESTAMP_PATHS = frozenset({
+    "incident_window.start",
+    "incident_window.investigation_cutoff",
+    "evidence_catalog[].event_time",
+    "evidence_catalog[].collection_time",
+    "evidence_catalog[].time_window_start",
+    "evidence_catalog[].time_window_end",
+    "changes[].timestamp",
+})
+EVALUATOR_TIMESTAMP_PATHS = frozenset({"incident_window.end"})
 
 
 class TimestampFormatError(ValueError):
-    """Raised when a timestamp is not a timezone-aware RFC 3339 instant.
-
-    The message is assembled by :meth:`for_value` so that the raise sites stay
-    short (Ruff ``TRY003``) and the wording lives with the error type.
-    """
+    """A timestamp cannot be interpreted as an RFC 3339 instant."""
 
     @classmethod
     def for_value(cls, value: object, reason: str) -> "TimestampFormatError":
-        return cls(f"{value!r} is not a usable instant: {reason}")
+        return cls(f"{value!r} is not a usable timezone-aware RFC 3339 instant: {reason}")
 
 
-def parse_instant(value: object) -> datetime:
-    """Parse ``value`` into a timezone-aware ``datetime`` normalised to UTC.
+@dataclass(frozen=True, order=True)
+class Instant:
+    """UTC whole second plus an exact fraction, ordered chronologically."""
 
-    Raises:
-        TimestampFormatError: if ``value`` is not a string, does not match the
-            RFC 3339 shape, or carries no timezone offset.
+    whole_second: datetime
+    fraction: Decimal
+
+    def isoformat(self) -> str:
+        """Canonical UTC representation, preserving sub-microsecond precision."""
+        whole = self.whole_second.isoformat(timespec="seconds")
+        fraction = format(self.fraction, "f")[1:].rstrip("0") if self.fraction else ""
+        return whole[:-6] + fraction + "+00:00"
+
+    def utcoffset(self) -> timedelta | None:
+        """The normalised instant is timezone-aware UTC, never a naive time."""
+        return self.whole_second.utcoffset()
+
+
+def parse_instant(value: object) -> Instant:
+    """Parse a timezone-aware RFC 3339 timestamp into an exact UTC instant.
+
+    The same RFC 3339 backend used by jsonschema verifies calendar dates,
+    clock components and numeric offsets. Full matching also rejects trailing
+    data. Leap seconds are unsupported by that backend and fail closed.
+    Unrepresentable UTC dates (offsets crossing datetime's year limits) yield
+    a controlled format error, not an OverflowError.
     """
     if not isinstance(value, str):
-        raise TimestampFormatError.for_value(value, "not an RFC 3339 string")
-    if not RFC3339_PATTERN.match(value):
-        raise TimestampFormatError.for_value(value, "does not match RFC 3339")
+        raise TimestampFormatError.for_value(value, "expected a string")
+    parts = _RFC3339_SHAPE.fullmatch(value)
+    if parts is None or not validate_rfc3339(value.upper()):
+        raise TimestampFormatError.for_value(value, "invalid date, clock, offset or syntax")
     try:
-        parsed = datetime.fromisoformat(_normalise(value))
-    except ValueError as error:
-        raise TimestampFormatError.for_value(value, f"not a valid date-time: {error}") from error
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise TimestampFormatError.for_value(value, "no timezone offset")
-    return parsed.astimezone(UTC)
-
-
-def _normalise(value: str) -> str:
-    """Upper-case the ``t`` separator and ``z`` zone for ``fromisoformat``.
-
-    RFC 3339 permits lower case; ``datetime.fromisoformat`` does not. The regex
-    has already fixed the shape, so only these two positions need adjusting.
-    """
-    normalised = value[:10] + "T" + value[11:]
-    if normalised.endswith("z"):
-        normalised = normalised[:-1] + "Z"
-    return normalised
-
-
-def try_parse_instant(value: object) -> datetime | None:
-    """``parse_instant`` that returns ``None`` instead of raising."""
-    try:
-        return parse_instant(value)
-    except TimestampFormatError:
-        return None
+        whole = datetime.fromisoformat(parts["whole"].upper() + parts["zone"].upper())
+        whole = whole.astimezone(UTC)
+    except (ValueError, OverflowError) as error:
+        raise TimestampFormatError.for_value(value, "UTC instant is out of range") from error
+    return Instant(whole, Decimal("0" + (parts["fraction"] or ".0")))
 
 
 def check_temporal_integrity(cases: list[object]) -> list[str]:
-    """Return temporal-cutoff violations for every case in ``cases``."""
-    errors: list[str] = []
-    for case in cases:
-        errors.extend(check_case_temporal_integrity(case))
-    return errors
+    """Report all temporal violations, including malformed structures."""
+    return [error for case in cases for error in check_case_temporal_integrity(case)]
 
 
 def check_case_temporal_integrity(case: object) -> list[str]:
-    """Return temporal-cutoff violations for a single case."""
+    """Report a case's cutoff violations without assuming schema-valid input."""
     if not isinstance(case, dict):
         return [MalformedCaseError.case_not_an_object(case).message]
-
     case_id = str(case.get("case_id", "<unknown case>"))
     window = case.get("incident_window")
     if not isinstance(window, dict):
@@ -117,111 +112,117 @@ def check_case_temporal_integrity(case: object) -> list[str]:
         ]
 
     errors: list[str] = []
-    errors.extend(_check_window(case_id, window))
+    times = {
+        field: _read_time(window, field, f"{case_id}: incident_window.{field}", errors)
+        for field in ("start", "end", "investigation_cutoff")
+    }
+    cutoff = times["investigation_cutoff"]
+    _check_order(times["start"], times["end"], f"{case_id}: incident_window.start > end", errors)
+    _check_cutoff(times["start"], cutoff, f"{case_id}: incident_window.start", errors)
 
-    cutoff = try_parse_instant(window.get("investigation_cutoff"))
-    if cutoff is None:
-        # Without a usable cutoff no other temporal rule can be evaluated.
-        return errors
-    if "start" in window:
-        start = try_parse_instant(window["start"])
-        if start is not None and start > cutoff:
-            errors.append(_after(case_id, "incident_window.start", window["start"], cutoff))
-    if "start" in window and "end" in window:
-        start = try_parse_instant(window["start"])
-        end = try_parse_instant(window["end"])
-        if start is not None and end is not None and start > end:
-            errors.append(
-                f"{case_id}: incident_window.start {window['start']} is after "
-                f"incident_window.end {window['end']}"
-            )
-
-    errors.extend(_check_evidence(case, case_id, cutoff))
-    errors.extend(_check_changes(case, case_id, cutoff))
+    _check_records(case, "evidence_catalog", case_id, cutoff, errors)
+    _check_records(case, "changes", case_id, cutoff, errors)
     return errors
 
 
-def _check_window(case_id: str, window: dict) -> list[str]:
-    errors = []
-    for field in ("start", "end", "investigation_cutoff"):
-        if field not in window:
-            errors.append(f"{case_id}: incident_window.{field} is missing")
-        elif try_parse_instant(window[field]) is None:
+def _check_records(
+    case: dict, key: str, case_id: str, cutoff: Instant | None, errors: list[str]
+) -> None:
+    records = case.get(key)
+    if not isinstance(records, list):
+        errors.append(MalformedCaseError.wrong_type(case_id, key, "an array", records).message)
+        return
+    for index, record in enumerate(records):
+        where = f"{case_id}: {key}[{index}]"
+        if not isinstance(record, dict):
             errors.append(
-                f"{case_id}: incident_window.{field} {window[field]!r} is not a "
-                "timezone-aware RFC 3339 timestamp"
-            )
-    return errors
-
-
-def _check_evidence(case: dict, case_id: str, cutoff: datetime) -> list[str]:
-    catalog = case.get("evidence_catalog", [])
-    if not isinstance(catalog, list):
-        return [
-            MalformedCaseError.wrong_type(case_id, "evidence_catalog", "an array", catalog).message
-        ]
-
-    errors: list[str] = []
-    for index, item in enumerate(catalog):
-        if not isinstance(item, dict):
-            errors.append(
-                MalformedCaseError.wrong_type(
-                    case_id, f"evidence_catalog[{index}]", "an object", item
-                ).message
+                MalformedCaseError.wrong_type(case_id, where, "an object", record).message
             )
             continue
-        subject = f"evidence_catalog[{index}] ({item.get('evidence_id', '?')})"
-        for field in ("event_time", "collection_time", "time_window_end"):
-            errors.extend(_at_or_before(case_id, subject, item, field, cutoff))
-        errors.extend(_ordered_window(case_id, subject, item))
-    return errors
+        if key == "evidence_catalog":
+            _check_evidence_times(record, where, cutoff, errors)
+        else:
+            instant = _read_time(record, "timestamp", f"{where}.timestamp", errors)
+            _check_cutoff(instant, cutoff, f"{where}.timestamp", errors)
 
 
-def _check_changes(case: dict, case_id: str, cutoff: datetime) -> list[str]:
-    changes = case.get("changes", [])
-    if not isinstance(changes, list):
-        return [MalformedCaseError.wrong_type(case_id, "changes", "an array", changes).message]
-
-    errors: list[str] = []
-    for index, change in enumerate(changes):
-        if not isinstance(change, dict):
-            errors.append(
-                MalformedCaseError.wrong_type(
-                    case_id, f"changes[{index}]", "an object", change
-                ).message
-            )
+def _check_evidence_times(
+    record: dict, where: str, cutoff: Instant | None, errors: list[str]
+) -> None:
+    times = {}
+    for field in ("event_time", "collection_time", "time_window_start", "time_window_end"):
+        if field.startswith("time_window_") and field not in record:
             continue
-        subject = f"changes[{index}] ({change.get('change_id', '?')})"
-        errors.extend(_at_or_before(case_id, subject, change, "timestamp", cutoff))
-    return errors
+        times[field] = _read_time(record, field, f"{where}.{field}", errors)
+        _check_cutoff(times[field], cutoff, f"{where}.{field}", errors)
 
-
-def _at_or_before(
-    case_id: str, subject: str, record: dict, field: str, cutoff: datetime
-) -> list[str]:
-    if field not in record:
-        return []
-    instant = try_parse_instant(record[field])
-    if instant is None or instant <= cutoff:
-        return []
-    return [_after(case_id, f"{subject} {field}", record[field], cutoff)]
-
-
-def _ordered_window(case_id: str, subject: str, record: dict) -> list[str]:
-    if "time_window_start" not in record or "time_window_end" not in record:
-        return []
-    window_start = try_parse_instant(record["time_window_start"])
-    window_end = try_parse_instant(record["time_window_end"])
-    if window_start is None or window_end is None or window_start <= window_end:
-        return []
-    return [
-        f"{case_id}: {subject} time_window_start {record['time_window_start']} is after "
-        f"time_window_end {record['time_window_end']}"
-    ]
-
-
-def _after(case_id: str, subject: str, value: object, cutoff: datetime) -> str:
-    return (
-        f"{case_id}: {subject} {value} is after investigation_cutoff "
-        f"{cutoff.isoformat()} — the investigator could not have known it"
+    # Aggregate/trace windows may be absent, but a supplied interval must have
+    # both endpoints. Schema dependentRequired asserts the same shape rule.
+    if ("time_window_start" in record) != ("time_window_end" in record):
+        errors.append(f"{where}: time_window_start and time_window_end must be supplied together")
+    _check_order(
+        times.get("time_window_start"),
+        times.get("time_window_end"),
+        f"{where}: time_window_start > time_window_end",
+        errors,
     )
+
+
+def check_visible_time_literals(view: dict) -> list[str]:
+    """Check standalone timestamp-like values in otherwise opaque projected data.
+
+    Configuration details may contain a timestamp without a schema ``format``
+    annotation. An ISO-shaped standalone value must not be a future/naive-time
+    backdoor. Embedded dates inside prose or URLs still require author review;
+    this does not pretend to interpret natural-language temporal claims.
+    """
+    errors: list[str] = []
+    window = view.get("incident_window", {})
+    if not isinstance(window, dict) or "investigation_cutoff" not in window:
+        return errors  # the typed temporal validator diagnoses this first
+    cutoff = parse_instant(window["investigation_cutoff"])
+    _check_literals(view, str(view.get("case_id", "<unknown case>")), cutoff, errors)
+    return errors
+
+
+def _check_literals(value: object, path: str, cutoff: Instant, errors: list[str]) -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            _check_literals(item, f"{path}.{key}", cutoff, errors)
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            _check_literals(item, f"{path}[{index}]", cutoff, errors)
+    elif isinstance(value, str) and re.fullmatch(
+        r"[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt ][0-9:.+Zz-]+", value
+    ):
+        try:
+            instant = parse_instant(value)
+        except TimestampFormatError as error:
+            errors.append(f"{path}: {error}")
+        else:
+            _check_cutoff(instant, cutoff, path, errors)
+
+
+def _read_time(record: dict, field: str, path: str, errors: list[str]) -> Instant | None:
+    if field not in record:
+        errors.append(f"{path} is missing")
+        return None
+    try:
+        return parse_instant(record[field])
+    except TimestampFormatError as error:
+        errors.append(f"{path}: {error}")
+        return None
+
+
+def _check_cutoff(
+    instant: Instant | None, cutoff: Instant | None, path: str, errors: list[str]
+) -> None:
+    if instant is not None and cutoff is not None and instant > cutoff:
+        errors.append(
+            f"{path} {instant.isoformat()} is after investigation_cutoff {cutoff.isoformat()}"
+        )
+
+
+def _check_order(start: Instant | None, end: Instant | None, path: str, errors: list[str]) -> None:
+    if start is not None and end is not None and start > end:
+        errors.append(f"{path}: reversed window ({start.isoformat()} > {end.isoformat()})")

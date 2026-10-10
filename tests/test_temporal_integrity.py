@@ -1,268 +1,274 @@
-"""Temporal cutoff integrity (audit §2).
-
-The frozen-snapshot contract says an investigator may only see what was known
-at ``incident_window.investigation_cutoff``. These tests pin that down:
-
-* ``incident_window.end`` is not model-visible when it is after the cutoff;
-* no agent-visible evidence, window or change may be dated after the cutoff;
-* timestamps are compared as instants, never as strings;
-* malformed or naive timestamps cannot bypass the invariant.
-"""
+"""Temporal-cutoff regressions at helper, projection and installed-CLI boundaries."""
 
 from copy import deepcopy
+from datetime import timedelta
 
 import pytest
 
-from nexus_benchmarks.agent_view import CONDITIONALLY_EXCLUDED_KEYS, build_agent_view
-from nexus_benchmarks.cli import MIN_TOTAL_CASES
+from nexus_benchmarks.agent_view import (
+    AGENT_VISIBLE_NESTED_KEYS,
+    EVALUATOR_ONLY_NESTED_KEYS,
+    build_agent_view,
+)
+from nexus_benchmarks.errors import TemporalIntegrityError
 from nexus_benchmarks.temporal import (
+    CUTOFF_TIMESTAMP_PATHS,
+    EVALUATOR_TIMESTAMP_PATHS,
     TimestampFormatError,
     check_case_temporal_integrity,
     parse_instant,
-    try_parse_instant,
 )
 
+# These cases isolate each typed, projected timestamp (including both optional
+# window endpoints). sample_case is INC-001 with a 10:15Z cutoff.
+FUTURE_FIELDS = [
+    ("incident_window", None, "start"),
+    ("evidence_catalog", 0, "event_time"),
+    ("evidence_catalog", 0, "collection_time"),
+    ("evidence_catalog", 0, "time_window_start"),
+    ("evidence_catalog", 0, "time_window_end"),
+    ("changes", 0, "timestamp"),
+]
+BAD_TIMESTAMPS = [
+    "2024-01-15T10:00:00",  # naive: no offset
+    "2024-01-15 10:00:00Z",  # space separator: outside the strict schema contract
+    "not-a-timestamp",
+    "2024-13-45T99:00:00Z",
+    "2024-01-15T10:00:00+00:99",  # datetime alone silently normalises this offset
+    "2024-01-15T10:00:00+24:00",
+    "2024-01-15T10:00:00Z\n",  # full matching must reject trailing data
+    "0001-01-01T00:00:00+01:00",  # UTC underflow: controlled error, not OverflowError
+    "9999-12-31T23:00:00-02:00",  # UTC overflow
+    "2024-01-15",
+    "10:00:00Z",
+    "",
+    None,
+    1705312800,
+    ["2024-01-15T10:00:00Z"],
+]
 
-def test_every_fixture_has_a_window_end_after_its_cutoff(corpus):
-    """The leak this module exists to close is present in every fixture."""
-    count = 0
-    for case in corpus:
-        window = case["incident_window"]
-        if parse_instant(window["end"]) > parse_instant(window["investigation_cutoff"]):
-            count += 1
-    assert count == len(corpus)
-    assert len(corpus) >= MIN_TOTAL_CASES
+
+def _record(case, group, index):
+    return case[group] if index is None else case[group][index]
 
 
-def test_window_end_is_not_in_the_agent_view(corpus):
-    for case in corpus:
-        window = build_agent_view(case)["incident_window"]
-        assert "end" not in window, f"{case['case_id']} leaked incident_window.end"
+def _date_time_paths(spec, prefix=""):
+    paths = {prefix} if spec.get("format") == "date-time" else set()
+    for key, child in spec.get("properties", {}).items():
+        paths.update(_date_time_paths(child, prefix + "." + key if prefix else key))
+    if "items" in spec:
+        paths.update(_date_time_paths(spec["items"], prefix + "[]"))
+    return paths
 
 
-def test_window_end_is_kept_when_it_is_not_in_the_future(sample_case):
-    """An already-finished window is ordinary context, not future knowledge."""
-    sample_case["incident_window"]["end"] = sample_case["incident_window"]["start"]
-    assert "end" in build_agent_view(sample_case)["incident_window"]
+def test_every_schema_timestamp_has_a_temporal_disposition(incident_schema):
+    """New typed time-bearing fields cannot silently bypass the policy."""
+    assert _date_time_paths(incident_schema) == CUTOFF_TIMESTAMP_PATHS | EVALUATOR_TIMESTAMP_PATHS
+    assert not CUTOFF_TIMESTAMP_PATHS & EVALUATOR_TIMESTAMP_PATHS
+    for path in CUTOFF_TIMESTAMP_PATHS:
+        group, field = path.replace("[]", "").split(".")
+        assert field in AGENT_VISIBLE_NESTED_KEYS[group]
 
 
-def test_window_end_is_dropped_when_the_cutoff_is_unparseable(sample_case):
-    """Fail closed: 'cannot prove it is past' must not become 'assume it is past'."""
-    sample_case["incident_window"]["investigation_cutoff"] = "whenever"
+def test_window_end_is_explicitly_evaluator_only():
+    assert EVALUATOR_ONLY_NESTED_KEYS["incident_window"] == frozenset({"end"})
+    assert "end" not in AGENT_VISIBLE_NESTED_KEYS["incident_window"]
+
+
+@pytest.mark.parametrize("end", ["2024-01-15T10:10:00Z", "2024-01-15T10:45:00Z"])
+def test_window_end_never_appears_even_before_the_cutoff(sample_case, end):
+    sample_case["incident_window"]["end"] = end
     assert "end" not in build_agent_view(sample_case)["incident_window"]
 
 
-def test_cutoff_and_start_stay_visible(corpus):
+def test_every_current_projection_excludes_window_end(corpus):
     for case in corpus:
-        window = build_agent_view(case)["incident_window"]
-        assert set(window) == {"start", "investigation_cutoff"}
-
-
-def test_end_is_explicitly_classified_as_conditionally_excluded():
-    assert CONDITIONALLY_EXCLUDED_KEYS["incident_window"] == frozenset({"end"})
+        assert set(build_agent_view(case)["incident_window"]) == {"start", "investigation_cutoff"}
 
 
 def test_corpus_has_no_temporal_violations(corpus):
     assert [error for case in corpus for error in check_case_temporal_integrity(case)] == []
 
 
-def test_no_agent_visible_timestamp_exceeds_its_cutoff(corpus):
-    """Acceptance condition: nothing in a projection is dated after the cutoff."""
+def test_every_current_projection_is_frozen_at_its_cutoff(corpus):
+    """Independent assertions on every exposed typed timestamp, not just the helper."""
     for case in corpus:
-        cutoff = parse_instant(case["incident_window"]["investigation_cutoff"])
         view = build_agent_view(case)
+        cutoff = parse_instant(view["incident_window"]["investigation_cutoff"])
+        assert parse_instant(view["incident_window"]["start"]) <= cutoff
+        assert "end" not in view["incident_window"]
         for evidence in view["evidence_catalog"]:
-            for field in ("event_time", "collection_time", "time_window_end"):
+            for field in ("event_time", "collection_time", "time_window_start", "time_window_end"):
                 if field in evidence:
                     assert parse_instant(evidence[field]) <= cutoff, (case["case_id"], field)
         for change in view["changes"]:
             assert parse_instant(change["timestamp"]) <= cutoff, case["case_id"]
-        assert parse_instant(view["incident_window"]["start"]) <= cutoff, case["case_id"]
 
 
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("event_time", "2024-01-15T10:20:00Z"),
-        ("collection_time", "2024-01-15T10:20:00Z"),
-        ("time_window_end", "2024-01-15T10:20:00Z"),
-    ],
-)
-def test_future_evidence_is_rejected(sample_case, field, value):
-    sample_case["evidence_catalog"][0][field] = value
+@pytest.mark.parametrize(("group", "index", "field"), FUTURE_FIELDS)
+def test_future_timestamp_is_rejected_by_policy_and_projection(sample_case, group, index, field):
+    _record(sample_case, group, index)[field] = "2024-01-15T10:20:00Z"
     errors = check_case_temporal_integrity(sample_case)
-    assert errors and "is after investigation_cutoff" in errors[0] and field in errors[0]
+    assert any(field in error and "is after investigation_cutoff" in error for error in errors)
+    with pytest.raises(TemporalIntegrityError, match=field):
+        build_agent_view(sample_case)
 
 
-def test_future_change_is_rejected(sample_case):
-    sample_case["changes"][0]["timestamp"] = "2024-01-15T10:30:00Z"
-    errors = check_case_temporal_integrity(sample_case)
-    assert errors and "changes[0]" in errors[0] and "timestamp" in errors[0]
+@pytest.mark.parametrize(("group", "index", "field"), FUTURE_FIELDS)
+def test_installed_cli_rejects_each_future_timestamp(run_cli, sample_case, group, index, field):
+    sample_case["case_id"] = "INC-900"
+    _record(sample_case, group, index)[field] = "2024-01-15T10:20:00Z"
+    result = run_cli({"INC-900-future.json": sample_case}, "--case", "INC-900")
+    output = result.stdout + result.stderr
+    assert result.returncode == 1, output
+    assert field in output and "is after investigation_cutoff" in output
+    assert "Traceback" not in output
 
 
-def test_future_window_start_is_rejected(sample_case):
-    sample_case["incident_window"]["start"] = "2024-01-15T10:20:00Z"
-    errors = check_case_temporal_integrity(sample_case)
-    assert errors and "incident_window.start" in errors[0]
+@pytest.mark.parametrize(("group", "index", "field"), FUTURE_FIELDS)
+def test_malformed_and_naive_times_cannot_bypass_direct_projection(
+    sample_case, group, index, field
+):
+    for timestamp in BAD_TIMESTAMPS:
+        broken = deepcopy(sample_case)
+        _record(broken, group, index)[field] = timestamp
+        errors = check_case_temporal_integrity(broken)
+        assert any(field in error and "RFC 3339" in error for error in errors)
+        with pytest.raises(TemporalIntegrityError, match=field):
+            build_agent_view(broken)
 
 
-def test_reversed_evidence_window_is_rejected(sample_case):
-    sample_case["evidence_catalog"][0]["time_window_start"] = "2024-01-15T10:10:00Z"
-    sample_case["evidence_catalog"][0]["time_window_end"] = "2024-01-15T10:05:00Z"
-    errors = check_case_temporal_integrity(sample_case)
-    assert any(
-        "time_window_start" in error and "after time_window_end" in error for error in errors
-    )
-
-
-def test_reversed_incident_window_is_rejected(sample_case):
-    sample_case["incident_window"]["start"] = "2024-01-15T10:10:00Z"
-    sample_case["incident_window"]["end"] = "2024-01-15T10:05:00Z"
-    errors = check_case_temporal_integrity(sample_case)
-    assert any(
-        "incident_window.start" in error and "after incident_window.end" in error
-        for error in errors
-    )
-
-
-def test_evidence_exactly_at_the_cutoff_is_accepted(sample_case):
-    cutoff = sample_case["incident_window"]["investigation_cutoff"]
-    sample_case["evidence_catalog"][0]["event_time"] = cutoff
-    sample_case["evidence_catalog"][0]["collection_time"] = cutoff
-    assert check_case_temporal_integrity(sample_case) == []
-
-
-def test_offsets_are_compared_as_instants(sample_case):
-    """10:00:00Z and 11:00:00+01:00 are the same instant, not a string mismatch."""
-    assert parse_instant("2024-01-15T10:00:00Z") == parse_instant("2024-01-15T11:00:00+01:00")
-    assert parse_instant("2024-01-15T10:00:00Z") < parse_instant("2024-01-15T10:00:00-01:00")
-
-    # 11:16+01:00 is 10:16Z — after the 10:15Z cutoff.
-    sample_case["evidence_catalog"][0]["event_time"] = "2024-01-15T11:16:00+01:00"
-    assert check_case_temporal_integrity(sample_case), (
-        "a later instant written with a positive offset must still be rejected"
-    )
-
-    # 11:14+01:00 is 10:14Z — before the cutoff.
-    sample_case["evidence_catalog"][0]["event_time"] = "2024-01-15T11:14:00+01:00"
-    assert check_case_temporal_integrity(sample_case) == [], (
-        "an earlier instant written with a positive offset must be accepted"
-    )
-
-
-def test_negative_offset_leak_is_caught(sample_case):
-    """09:16-01:00 is 10:16Z: it sorts *before* the cutoff as a string but is later.
-
-    A lexicographic comparison would let this future record through.
-    """
-    value = "2024-01-15T09:16:00-01:00"
-    cutoff = sample_case["incident_window"]["investigation_cutoff"]
-    assert value < cutoff, "string ordering says this is before the cutoff"
-    assert parse_instant(value) > parse_instant(cutoff), "instant ordering says it is after"
-
-    sample_case["evidence_catalog"][0]["event_time"] = value
-    assert check_case_temporal_integrity(sample_case)
-
-
-def test_positive_offset_record_is_not_false_flagged(sample_case):
-    """11:14+01:00 is 10:14Z: it sorts *after* the cutoff as a string but is earlier."""
-    value = "2024-01-15T11:14:00+01:00"
-    cutoff = sample_case["incident_window"]["investigation_cutoff"]
-    assert value > cutoff, "string ordering says this is after the cutoff"
-    assert parse_instant(value) < parse_instant(cutoff), "instant ordering says it is before"
-
-    sample_case["evidence_catalog"][0]["event_time"] = value
-    assert check_case_temporal_integrity(sample_case) == []
-
-
-@pytest.mark.parametrize(
-    "value",
-    [
-        "2024-01-15T10:00:00Z",
-        "2024-01-15t10:00:00z",
-        "2024-01-15T10:00:00.500Z",
-        "2024-01-15T10:00:00+05:30",
-    ],
-)
-def test_accepted_rfc3339_forms(value):
-    assert parse_instant(value).utcoffset() is not None
-
-
-@pytest.mark.parametrize(
-    "value",
-    [
-        "2024-01-15T10:00:00",  # naive: no offset
-        "2024-01-15 10:00:00Z",  # space separator (RFC 3339 NOTE form, rejected here)
-        "not-a-timestamp",
-        "2024-13-45T99:00:00Z",
-        "2024-01-15",  # date only
-        "10:00:00Z",  # time only
-        "",
-        None,
-        1705312800,  # epoch seconds
-        ["2024-01-15T10:00:00Z"],
-    ],
-)
-def test_rejected_timestamp_forms(value):
-    with pytest.raises(TimestampFormatError):
-        parse_instant(value)
-    assert try_parse_instant(value) is None
-
-
-def test_naive_timestamp_cannot_bypass_the_invariant(sample_case):
-    """A naive cutoff is reported rather than silently assumed to be UTC."""
-    sample_case["incident_window"]["investigation_cutoff"] = "2024-01-15T10:15:00"
-    errors = check_case_temporal_integrity(sample_case)
-    assert any("investigation_cutoff" in error and "RFC 3339" in error for error in errors)
+@pytest.mark.parametrize("field", ["event_time", "collection_time", "time_window_end"])
+@pytest.mark.parametrize("timestamp", ["not-a-time", "2024-01-15T10:00:00"])
+def test_installed_cli_rejects_malformed_evidence(run_cli, sample_case, field, timestamp):
+    sample_case["case_id"] = "INC-900"
+    sample_case["evidence_catalog"][0][field] = timestamp
+    result = run_cli({"INC-900-malformed.json": sample_case}, "--case", "INC-900")
+    output = result.stdout + result.stderr
+    assert result.returncode == 1, output
+    assert field in output and "date-time" in output
+    assert "dependent checks NOT RUN" in output
+    assert "Traceback" not in output
 
 
 @pytest.mark.parametrize("field", ["start", "end", "investigation_cutoff"])
 def test_missing_window_field_is_reported(sample_case, field):
-    broken = deepcopy(sample_case)
-    del broken["incident_window"][field]
-    errors = check_case_temporal_integrity(broken)
-    assert any(f"incident_window.{field} is missing" in error for error in errors)
+    del sample_case["incident_window"][field]
+    assert any(
+        f"incident_window.{field} is missing" in e
+        for e in check_case_temporal_integrity(sample_case)
+    )
+    with pytest.raises(TemporalIntegrityError, match=field):
+        build_agent_view(sample_case)
 
 
-def test_all_current_fixture_timestamps_are_timezone_aware(corpus):
-    for case in corpus:
-        window = case["incident_window"]
-        for field in ("start", "end", "investigation_cutoff"):
-            assert try_parse_instant(window[field]) is not None, (case["case_id"], field)
-        for evidence in case["evidence_catalog"]:
-            for field in ("event_time", "collection_time", "time_window_start", "time_window_end"):
-                if field in evidence:
-                    assert try_parse_instant(evidence[field]) is not None, (case["case_id"], field)
-        for change in case["changes"]:
-            assert try_parse_instant(change["timestamp"]) is not None, case["case_id"]
+@pytest.mark.parametrize("group", ["incident_window", "evidence_catalog"])
+def test_reversed_windows_are_rejected(sample_case, group):
+    record = sample_case[group] if group == "incident_window" else sample_case[group][0]
+    start, end = (
+        ("start", "end") if group == "incident_window" else ("time_window_start", "time_window_end")
+    )
+    record[start] = "2024-01-15T10:10:00Z"
+    record[end] = "2024-01-15T10:05:00Z"
+    assert any("reversed window" in error for error in check_case_temporal_integrity(sample_case))
+    with pytest.raises(TemporalIntegrityError, match="reversed window"):
+        build_agent_view(sample_case)
 
 
-# --- End-to-end enforcement through the installed CLI ---------------------
+@pytest.mark.parametrize("field", ["time_window_start", "time_window_end"])
+def test_partial_window_is_not_silently_accepted(sample_case, incident_validator, field):
+    del sample_case["evidence_catalog"][0][field]
+    assert list(incident_validator.iter_errors(sample_case)), "schema must require paired endpoints"
+    assert any("supplied together" in error for error in check_case_temporal_integrity(sample_case))
 
 
-def test_installed_cli_rejects_a_future_dated_case(run_cli, corpus):
-    """The invariant must hold in CI, not only when a helper is called directly."""
-    case = deepcopy(corpus[0])
-    case["case_id"] = "INC-900"
-    case["evidence_catalog"][0]["event_time"] = "2030-01-01T00:00:00Z"
-    result = run_cli({"INC-900-future-dated.json": case}, "--case", "INC-900")
-    assert result.returncode != 0, result.stdout
-    assert "is after investigation_cutoff" in result.stdout + result.stderr
-    assert "Traceback" not in result.stderr
+def test_evidence_exactly_at_cutoff_is_accepted(sample_case):
+    cutoff = sample_case["incident_window"]["investigation_cutoff"]
+    for field in ("event_time", "collection_time", "time_window_end"):
+        sample_case["evidence_catalog"][0][field] = cutoff
+    assert check_case_temporal_integrity(sample_case) == []
+    build_agent_view(sample_case)
 
 
-def test_installed_cli_accepts_the_committed_corpus(run_cli, corpus):
-    cases = {f"{case['case_id']}-{index}.json": case for index, case in enumerate(corpus)}
+@pytest.mark.parametrize(
+    ("timestamp", "future"),
+    [
+        ("2024-01-15T11:16:00+01:00", True),
+        ("2024-01-15T09:16:00-01:00", True),
+        ("2024-01-15T11:14:00+01:00", False),
+        ("2024-01-15T15:45:00+05:30", False),  # equal to 10:15Z cutoff
+    ],
+)
+def test_offsets_are_compared_as_instants(sample_case, timestamp, future):
+    sample_case["evidence_catalog"][0]["event_time"] = timestamp
+    assert bool(check_case_temporal_integrity(sample_case)) is future
+
+
+def test_equivalent_instants_with_different_offsets():
+    assert parse_instant("2024-01-15T10:00:00Z") == parse_instant("2024-01-15T11:00:00+01:00")
+    assert parse_instant("2024-01-15T10:00:00Z") == parse_instant("2024-01-15T15:30:00+05:30")
+
+
+def test_string_order_is_not_chronological_order():
+    cutoff = "2024-01-15T10:15:00Z"
+    earlier = "2024-01-15T11:14:00+01:00"
+    later = "2024-01-15T09:16:00-01:00"
+    assert earlier > cutoff and parse_instant(earlier) < parse_instant(cutoff)
+    assert later < cutoff and parse_instant(later) > parse_instant(cutoff)
+
+
+def test_sub_microsecond_future_is_not_truncated(sample_case):
+    sample_case["evidence_catalog"][0]["event_time"] = "2024-01-15T10:15:00.0000001Z"
+    assert check_case_temporal_integrity(sample_case)
+    assert parse_instant("2024-01-15T10:15:00.0000001Z") > parse_instant("2024-01-15T10:15:00Z")
+
+
+@pytest.mark.parametrize(
+    "timestamp",
+    [
+        "2024-01-15T10:00:00Z",
+        "2024-01-15t10:00:00z",
+        "2024-01-15T10:00:00.500Z",
+        "2024-01-15T15:30:00+05:30",
+    ],
+)
+def test_accepted_rfc3339_forms(timestamp):
+    assert parse_instant(timestamp).utcoffset() == timedelta(0)
+
+
+@pytest.mark.parametrize("timestamp", BAD_TIMESTAMPS)
+def test_rejected_rfc3339_forms(timestamp):
+    with pytest.raises(TimestampFormatError):
+        parse_instant(timestamp)
+
+
+def test_installed_cli_accepts_the_current_corpus(run_cli, corpus):
+    cases = {f"{case['case_id']}-snapshot.json": case for case in corpus}
     result = run_cli(cases)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Temporal integrity checks: PASSED" in result.stdout
 
 
-def test_installed_cli_rejects_a_naive_cutoff(run_cli, corpus):
-    """A naive cutoff must fail the CLI, not be silently assumed UTC."""
-    case = deepcopy(corpus[0])
-    case["case_id"] = "INC-900"
-    case["incident_window"]["investigation_cutoff"] = "2024-01-15T10:15:00"
-    result = run_cli({"INC-900-naive.json": case}, "--case", "INC-900")
-    assert result.returncode != 0, result.stdout
-    assert "Traceback" not in result.stderr
+@pytest.mark.parametrize("value", ["2030-01-01T00:00:00Z", "2024-01-15T10:20:00"])
+def test_opaque_config_cannot_hide_a_future_or_naive_time(sample_case, value):
+    sample_case["changes"][0]["details"] = {"observed_at": value}
+    with pytest.raises(TemporalIntegrityError, match="observed_at"):
+        build_agent_view(sample_case)
+
+
+def test_installed_cli_rejects_future_configuration_time(run_cli, sample_case):
+    sample_case["case_id"] = "INC-900"
+    sample_case["changes"][0]["details"] = {"observed_at": "2030-01-01T00:00:00Z"}
+    result = run_cli({"INC-900-future-config.json": sample_case}, "--case", "INC-900")
+    output = result.stdout + result.stderr
+    assert result.returncode == 1
+    assert "observed_at" in output and "is after investigation_cutoff" in output
+    assert "Traceback" not in output
+
+
+def test_opaque_config_past_time_is_accepted(sample_case):
+    sample_case["changes"][0]["details"] = {"observed_at": "2024-01-15T15:30:00+05:30"}
+    assert (
+        build_agent_view(sample_case)["changes"][0]["details"]
+        == sample_case["changes"][0]["details"]
+    )

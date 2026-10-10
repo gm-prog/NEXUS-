@@ -6,16 +6,17 @@ This project is in Phase 0 (pre-alpha). No security support is provided for any 
 
 ## Reporting a Vulnerability
 
-If you discover a security issue in this codebase (e.g., in the validation
-CLI, schema processing, or test infrastructure), please report it by opening a
-[GitHub Security Advisory](https://github.com/gm-prog/NEXUS-/security/advisories/new).
+Use the repository's [GitHub Security Advisory workflow](https://github.com/gm-prog/NEXUS-/security/advisories/new)
+for private vulnerability handling. **No verified public security email address
+is configured**, so none is advertised here. Do not file public issues
+containing vulnerability details.
 
-That is the only reporting channel. This project does not operate a security
-mailbox; an earlier revision of this file advertised `security@nexus.local`,
-which is a placeholder domain that nobody monitors, so reports sent there would
-have been silently lost.
-
-Do not file public issues for security vulnerabilities.
+**Reporting availability (checked 2026-10-10):** GitHub's
+`GET /repos/gm-prog/NEXUS-/private-vulnerability-reporting` reports
+`enabled: false`. Maintainers can draft advisories; the public researcher
+reporting route is not enabled. Maintainers should enable private reporting or
+publish a verified contact through a separately authorised settings decision.
+No repository settings were changed in this correction.
 
 ## Threat Model & Permission Boundaries
 
@@ -29,7 +30,10 @@ Key principles:
 - Model outputs are **not authorization** — enforcement happens at tool/policy boundary
 - No production-mutating permissions in early phases
 - Sandbox escape and network abuse are explicit threats for future remediation phase
-- Benchmark answer leakage is a contamination risk
+- Benchmark answer/time leakage is a contamination risk; future evidence is rejected
+- Fixture tool classification is metadata validation, **not runtime authorization**.
+  Future executable tools must enforce capabilities and read-only credentials at
+  their execution boundary (including restricting SQL, commands and tool arguments)
 
 ## Secrets Handling
 
@@ -48,7 +52,8 @@ Key principles:
   only enforces `format: date-time` when a `FormatChecker` backend is present.
 - CI installs from PyPI with `pip` and does not use hash checking.
 - No arbitrary code execution from benchmark fixtures (they are data, not code).
-- Tracked follow-up (**not** started): adopt a lockfile (uv or pip-compile) and
-  install with `--require-hashes` or `uv sync --locked`. Owner: NEXUS
-  maintainers. Trigger: start of Phase 1, before any dependency that reaches
-  production data is added. See [CONTRIBUTING.md](CONTRIBUTING.md#dependency-installation).
+- A reviewed lockfile plus enforced locked/hashed installs is a
+  **pre-Phase-1 prerequisite**, not a Phase 1 task that can be deferred until
+  after implementation starts. Owner: NEXUS maintainers. Trigger: before any
+  Phase 1 implementation begins. This correction does not adopt tooling or
+  silently generate a lockfile. See [CONTRIBUTING.md](CONTRIBUTING.md#dependency-installation).

@@ -64,6 +64,17 @@ class MalformedCaseError(NexusBenchmarkError):
         return cls(case_id, f"{subject} must be {expected}, got {found}")
 
 
+class TemporalIntegrityError(NexusBenchmarkError):
+    """Projection refused because its investigation snapshot is not frozen."""
+
+    def __init__(self, violations: list[str]) -> None:
+        self.violations = violations
+        super().__init__(
+            "Refusing to build an agent view: temporal integrity failed:\n"
+            + "\n".join(f"  - {violation}" for violation in violations)
+        )
+
+
 class AgentViewError(NexusBenchmarkError):
     """Raised when a case cannot be projected onto the agent-visible view.
 

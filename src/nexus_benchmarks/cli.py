@@ -4,7 +4,7 @@ NEXUS Benchmark Validation CLI
 
 Validates incident case fixtures against JSON schemas and checks cross-file
 invariants (unique IDs, minimum counts, ambiguity coverage, verification-step
-execution policy, and agent-view separation from ground truth).
+execution policy, temporal cutoff integrity, and agent-view separation from ground truth).
 """
 
 import json
@@ -14,7 +14,7 @@ from pathlib import Path
 
 import click
 from jsonschema import Draft202012Validator, FormatChecker
-from jsonschema.exceptions import SchemaError, ValidationError
+from jsonschema.exceptions import SchemaError
 
 from nexus_benchmarks.agent_view import find_leaks
 from nexus_benchmarks.assets import (
@@ -54,7 +54,7 @@ def load_schema(path: Path) -> dict:
     return schema
 
 
-def load_case(filepath: Path) -> dict:
+def load_case(filepath: Path) -> object:
     """Load an incident case file."""
     try:
         with Path(filepath).open(encoding="utf-8") as handle:
@@ -79,17 +79,15 @@ def discover_cases() -> list[Path]:
     return sorted(INCIDENTS_DIR.glob("INC-*.json"))
 
 
-def validate_case(case: dict, validator: Draft202012Validator, filepath: Path) -> list[str]:
-    """Validate a single case against the schema. Returns list of error messages."""
+def validate_case(case: object, validator: Draft202012Validator, filepath: Path) -> list[str]:
+    """Report all schema errors deterministically, including non-object roots."""
     errors = []
-    try:
-        validator.validate(case)
-    except ValidationError as error:
-        location = (
-            " -> ".join(str(part) for part in error.absolute_path)
-            if error.absolute_path
-            else "root"
-        )
+    ordered = sorted(
+        validator.iter_errors(case),
+        key=lambda error: (tuple(str(part) for part in error.absolute_path), error.message),
+    )
+    for error in ordered:
+        location = " -> ".join(str(part) for part in error.absolute_path) or "root"
         errors.append(f"{filepath.name}: {location}: {error.message}")
     return errors
 
@@ -105,7 +103,7 @@ def required_ambiguous_cases(total_count: int) -> int:
     return max(MIN_AMBIGUITY_CASES, math.ceil(total_count * MIN_AMBIGUITY_RATIO))
 
 
-def check_composition(cases: list[dict]) -> list[str]:
+def check_composition(cases: list[object]) -> list[str]:
     """Check cross-file invariants. Returns list of error messages."""
     errors = []
     case_ids: dict[str, str] = {}
@@ -114,12 +112,15 @@ def check_composition(cases: list[dict]) -> list[str]:
     total_count = len(cases)
 
     for i, case in enumerate(cases):
+        if not isinstance(case, dict):
+            errors.append(f"Case at index {i}: expected a JSON object, got {_type_name(case)}")
+            continue
         case_id = case.get("case_id")
         schema_version = case.get("schema_version")
         scenario_type = case.get("scenario_type")
 
-        if not case_id:
-            errors.append(f"Case at index {i}: missing case_id")
+        if not isinstance(case_id, str) or not case_id:
+            errors.append(f"Case at index {i}: missing case_id or expected a non-empty string")
             continue
 
         if case_id in case_ids:
@@ -129,10 +130,12 @@ def check_composition(cases: list[dict]) -> list[str]:
         else:
             case_ids[case_id] = f"index {i}"
 
-        if schema_version:
+        if isinstance(schema_version, str) and schema_version:
             schema_versions.add(schema_version)
+        elif schema_version is not None:
+            errors.append(f"{case_id}: schema_version must be a non-empty string")
 
-        if scenario_type in AMBIGUOUS_TYPES:
+        if isinstance(scenario_type, str) and scenario_type in AMBIGUOUS_TYPES:
             ambiguous_count += 1
 
     if total_count < MIN_TOTAL_CASES:
@@ -158,7 +161,7 @@ def check_composition(cases: list[dict]) -> list[str]:
     return errors
 
 
-def check_benchmark_policy(cases: list[dict]) -> list[str]:
+def check_benchmark_policy(cases: list[object]) -> list[str]:
     """Check per-case invariants that are not expressible as JSON Schema alone.
 
     Each check is called per case and is structurally defensive, so a malformed
@@ -167,8 +170,10 @@ def check_benchmark_policy(cases: list[dict]) -> list[str]:
     errors: list[str] = []
     for case in cases:
         errors.extend(check_case_execution_policy(case))
-        errors.extend(check_case_temporal_integrity(case))
-        errors.extend(find_leaks(case))
+        temporal_errors = check_case_temporal_integrity(case)
+        errors.extend(temporal_errors)
+        if not temporal_errors:
+            errors.extend(find_leaks(case))
     return errors
 
 
@@ -188,43 +193,66 @@ def validate_all(
 
     incident_validator = build_validator(incident_schema)
 
-    cases_to_validate = []
-    for filepath in case_files:
-        case = load_case(filepath)
-        if not isinstance(case, dict):
-            all_errors.append(
-                f"{filepath.name}: root value must be a JSON object, got {_type_name(case)}"
-            )
-            continue
-        if selected_case_id:
-            if case.get("case_id") == selected_case_id:
-                cases_to_validate.append((filepath, case))
-        else:
-            cases_to_validate.append((filepath, case))
+    cases_to_validate, load_errors = _load_selected_cases(case_files, selected_case_id)
+    all_errors.extend(load_errors)
+    incomplete_corpus = bool(load_errors)
 
     if selected_case_id and not cases_to_validate:
-        return False, [f"Case not found: {selected_case_id}"]
-
+        all_errors.append(f"Case not found or unreadable: {selected_case_id}")
+        return False, all_errors
     if selected_case_id and len(cases_to_validate) > 1:
-        return False, [f"Multiple cases claim ID: {selected_case_id}"]
+        all_errors.append(f"Multiple cases claim ID: {selected_case_id}")
+        return False, all_errors
 
     schema_valid_cases = []
     for filepath, case in cases_to_validate:
         case_errors = validate_case(case, incident_validator, filepath)
+        if not isinstance(case, dict):
+            case_errors.insert(
+                0, f"{filepath.name}: root value must be a JSON object, got {_type_name(case)}"
+            )
         all_errors.extend(case_errors)
         if case_errors:
-            # Policy, temporal and projection checks assume the schema holds.
-            # Running them on a structurally invalid case would raise.
-            all_errors.append(f"{filepath.name}: skipped {DEPENDENT_CHECKS} checks")
+            incomplete_corpus = True
+            all_errors.append(
+                f"{filepath.name}: schema validation failed; dependent checks NOT RUN "
+                f"({DEPENDENT_CHECKS})"
+            )
             continue
         schema_valid_cases.append(case)
 
     all_errors.extend(check_benchmark_policy(schema_valid_cases))
-
     if not selected_case_id:
-        all_errors.extend(check_composition([case for _, case in cases_to_validate]))
+        if incomplete_corpus:
+            all_errors.append("Composition checks: NOT RUN (schema-invalid or unreadable fixtures)")
+        else:
+            all_errors.extend(check_composition(schema_valid_cases))
 
     return len(all_errors) == 0, all_errors
+
+
+def _load_selected_cases(
+    case_files: list[Path], selected_case_id: str | None
+) -> tuple[list[tuple[Path, object]], list[str]]:
+    """Load candidates without calling .get() on non-object JSON values."""
+    loaded = []
+    errors = []
+    for filepath in case_files:
+        named_selection = selected_case_id is None or _file_matches_case(filepath, selected_case_id)
+        try:
+            case = load_case(filepath)
+        except CaseLoadError as error:
+            if named_selection:
+                errors.append(error.message)
+            continue
+        if (
+            selected_case_id
+            and not named_selection
+            and (not isinstance(case, dict) or case.get("case_id") != selected_case_id)
+        ):
+            continue
+        loaded.append((filepath, case))
+    return loaded, errors
 
 
 def list_cases() -> list[dict]:
@@ -242,13 +270,16 @@ def list_cases() -> list[dict]:
             })
             continue
         results.append({
-            "case_id": case.get("case_id", "UNKNOWN"),
-            "title": case.get("title", ""),
-            "category": case.get("category", ""),
-            "scenario_type": case.get("scenario_type", ""),
-            "difficulty": case.get("difficulty", ""),
+            key: str(case.get(key, "UNKNOWN" if key == "case_id" else ""))
+            for key in ("case_id", "title", "category", "scenario_type", "difficulty")
         })
+
     return results
+
+
+def _file_matches_case(filepath: Path, case_id: str) -> bool:
+    """Select malformed files by their filename when no usable case_id exists."""
+    return filepath.stem == case_id or filepath.stem.startswith(case_id + "-")
 
 
 def _type_name(value: object) -> str:

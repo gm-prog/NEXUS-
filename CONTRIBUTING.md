@@ -17,12 +17,11 @@ uv sync --dev
 ```
 
 **Lockfile: none is committed.** `pyproject.toml` declares minimum version
-bounds only (for example `jsonschema>=4.23.0`); it does not pin exact versions
-and there is no `uv.lock`, `requirements.txt` or `poetry.lock` in the
-repository. Repeatable installs are therefore *not* guaranteed today. Adopting
-a lockfile and installing with `--require-hashes` / `uv sync --locked` is a
-tracked Phase 1 follow-up, not started (owner: NEXUS maintainers; trigger:
-start of Phase 1 — see [SECURITY.md](SECURITY.md#supply-chain)).
+bounds, not exact versions. Installs are not pinned, hash-checked or guaranteed
+byte-reproducible. Adopting a reviewed lockfile with enforced locked/hashed
+installs is a **pre-Phase-1 prerequisite**, not implementation work for this
+correction. Owner: NEXUS maintainers. Trigger: before any Phase 1 implementation
+begins. See [SECURITY.md](SECURITY.md#supply-chain).
 
 ## Running Checks
 
@@ -43,7 +42,6 @@ pytest
 
 # Benchmark validation
 nexus-benchmark validate
-```
 
 # Packaging: build a wheel, install it in a clean environment and run the CLI
 # from a directory outside the checkout
@@ -65,7 +63,8 @@ CI runs the same commands. Do not skip checks locally.
   are really validated twice: `rfc3339-validator` (a runtime dependency, so
   `jsonschema.FormatChecker` actually enforces `format: date-time`) checks the
   *string shape*, and `src/nexus_benchmarks/temporal.py` parses each value into
-  a timezone-aware `datetime` for the cutoff comparisons below.
+  a UTC-normalised instant for cutoff comparison, preserving fractional seconds
+  beyond `datetime`'s six-digit precision.
 - Identifiers are **stable slugs**, not UUIDs: services match
   `^svc-[a-z0-9]+(?:-[a-z0-9]+)*$` (e.g. `svc-001-payment`), environments match
   `^env-[a-z0-9]+(?:-[a-z0-9]+)*$` (e.g. `env-prod-us-east-1`).
@@ -79,7 +78,7 @@ per-object allowlists) may be shown to an investigator:
 
 | Agent-visible | Evaluator-only (never shown) |
 |---------------|------------------------------|
-| `schema_version`, `case_id`, `environment`, `incident_window`, `initial_symptoms`, `affected_services` (`service_id`, `service_name` only), `evidence_catalog` (minus `synthetic_fixture_note`), `changes` | `title`, `category`, `scenario_type`, `difficulty`, `description`, `ground_truth`, `expected_diagnosis`, `misleading_or_confounding_signals`, `acceptable_alternatives`, `required_checks`, `remediation_guidance`, `tags` |
+| `schema_version`, `case_id`, `environment`, `incident_window` (`start`, `investigation_cutoff` only), `initial_symptoms`, `affected_services` (`service_id`, `service_name` only), `evidence_catalog` (minus `synthetic_fixture_note`), `changes` | `incident_window.end`, `title`, `category`, `scenario_type`, `difficulty`, `description`, `ground_truth`, `expected_diagnosis`, `misleading_or_confounding_signals`, `acceptable_alternatives`, `required_checks`, `remediation_guidance`, `tags` |
 
 The projection **fails closed**: an unclassified top-level key aborts the
 projection instead of being forwarded. `tests/test_agent_view.py` pins this
@@ -90,23 +89,33 @@ boundary and proves it is non-vacuous by injecting leaks.
 An investigator may only see what was known at
 `incident_window.investigation_cutoff`. Two rules enforce this:
 
-1. `incident_window.end` is **conditionally excluded** from the projection. It
-   is dropped unless it can be *proved* to be at or before the cutoff; if the
-   cutoff or the end is missing, unparseable or naive, the field is dropped.
-   "Cannot prove it is in the past" must never become "assume it is in the
-   past". In all 21 current fixtures `end` is after the cutoff, so today the
-   field is never model-visible.
-2. No agent-visible timestamp may be after the cutoff:
-   `evidence_catalog[].event_time`, `.collection_time`, `.time_window_end`,
-   `changes[].timestamp` and `incident_window.start`. Reversed windows
-   (`start` after `end`, `time_window_start` after `time_window_end`) are also
-   rejected.
+1. `incident_window.end` is **always evaluator-only**, including when it is at
+   or before the cutoff. It denotes eventual resolution/observation completion,
+   not the investigator's frozen input boundary.
+2. Every exposed typed time is parsed as a timezone-aware RFC 3339 instant:
+   `incident_window.start`, `investigation_cutoff`, evidence `event_time`,
+   `collection_time`, `time_window_start`, `time_window_end`, and change
+   `timestamp`. All except the cutoff itself must be at or before it. Offsets
+   are normalised to UTC, never ordered as strings; fractional seconds are
+   compared exactly. Naive or malformed values are errors, not silently skipped.
+3. Optional aggregate/trace windows may be absent, but a supplied interval
+   requires **both** endpoints in order. Both endpoints must be at/before the
+   cutoff. `incident_window.start > end` is also rejected.
+4. Future records are **rejected, not filtered**. `evidence_catalog` describes
+   available investigation input. Both `nexus-benchmark validate` and direct
+   `build_agent_view()` calls enforce this rule, so callers cannot bypass it
+   by skipping schema validation.
 
-Comparisons are made between timezone-aware `datetime`s in UTC, never between
-strings: `2024-01-15T09:16:00-01:00` sorts *before*
-`2024-01-15T10:15:00Z` as text but is a *later* instant, and a lexicographic
-check would have let that future record through.
-`tests/test_temporal_integrity.py` pins both directions.
+For example, `2024-01-15T09:16:00-01:00` sorts before
+`2024-01-15T10:15:00Z` as text but is a later instant. A lexicographic check
+would let that record through. `tests/test_temporal_integrity.py` pins both
+offset directions and equivalent instants.
+
+Standalone timestamp-like values in projected configuration are also checked.
+Free-form summaries, configuration `details`, and references still require
+manual temporal/answer-leakage review. A schema drift test requires any new
+**typed** date-time field to have an explicit cutoff/evaluator disposition;
+this is not a claim that the validator understands arbitrary prose.
 
 This is metadata validation of what the fixture *claims*, not a runtime
 control: nothing here grants, denies or executes a tool call.
@@ -151,7 +160,7 @@ boundary.
 7. Register any new `required_checks[].tool` in `TOOL_REGISTRY`; unregistered
    tools fail closed
 8. Run `nexus-benchmark validate` — must pass
-8. Run `pytest` — all tests must pass
+9. Run `pytest` — all tests must pass
 
 ### Modifying an Existing Case
 

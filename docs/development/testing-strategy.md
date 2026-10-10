@@ -47,8 +47,8 @@ NEXUS testing follows a layered approach aligned with the architecture:
 ### Agent-View / Anti-Leakage Tests (`tests/test_agent_view.py`)
 - The projection contains exactly the allowlisted keys
 - Every evaluator-only key is absent from the projection
-- `affected_services[].impact` and `evidence_catalog[].synthetic_fixture_note`
-  are dropped
+- `affected_services[].impact`, `evidence_catalog[].synthetic_fixture_note`
+  and `incident_window.end` are intentionally excluded
 - No evaluator-only value reaches the projection (value-level scan)
 - An unclassified top-level key **fails closed** (`AgentViewError`)
 - Injected leaks are detected: ground-truth values in evidence summaries,
@@ -59,11 +59,41 @@ NEXUS testing follows a layered approach aligned with the architecture:
 ### Execution Policy Tests (`tests/test_execution_policy.py`)
 - Every fixture step declares all four classification fields
 - No step mutates state automatically; no automated production mutation
-- Tools that imply mutation are never classified `read_only`
+- All 21 current tool names are in a positive side-effect registry; each of the
+  18 read-only tools has a positive test
+- Unknown names fail closed in every class; novel mutating names
+  (`set_feature_flag`, `promote_deployment`, `run_migration`, `flip_switch`)
+  fail the installed CLI when falsely declared read-only
+- Name heuristics are defence in depth, not runtime authorization
 - `staging_experiment` steps target staging/sandbox only
 - Negative cases: missing class, read-only mutation, automated mutation,
   production experiment, misclassified mutating tool
 - JSON Schema rejects the same violations independently
+
+### Temporal Integrity (`tests/test_temporal_integrity.py`)
+- `incident_window.end` never appears in a view, including when before cutoff
+- Every typed projected time is at/before cutoff in all current fixtures
+- Independent negative tests for future start, event, collection, both interval
+  endpoints and change timestamps at helper, projection and installed CLI boundaries
+- Timezone-aware RFC 3339 parsing, equal instants at different offsets, and both
+  offset cases where text ordering gives the wrong answer
+- Malformed/naive timestamps, invalid offset components, UTC overflow, paired
+  and reversed intervals, and exact sub-microsecond comparisons
+- Schema timestamp drift guard requires every new typed time to be classified
+
+### Malformed Input (`tests/test_malformed_input.py`)
+- Valid JSON with array/string/null/number root, invalid arrays/objects/scalars,
+  null elements, missing nested structures and invalid identity/enum shapes
+- Schema-invalid cases are diagnosed; dependent policy checks are NOT RUN
+- Composition checks do not crash on invalid shapes; valid cases still get policy checks
+- Installed subprocesses exit exactly 1 with field/file diagnostics, no traceback
+
+### Fixture Semantics (`tests/test_fixture_semantics.py`)
+- INC-013 scores the observed dependency failure, not an untested latent defect
+- Its comparison traces remain required; optional experiments are not assumed performed
+- INC-022 retains genuine observed-error ambiguity because failure-location and
+  flag-off comparison evidence are missing
+- This does not evaluate AI accuracy or prove realism of arbitrary causal prose
 
 ### CLI Tests (`tests/test_cli.py`)
 - `nexus-benchmark validate` exits 0 on success
@@ -126,24 +156,14 @@ The investigator sees **only** information available at the investigation cutoff
 
 ### Implementation
 ```python
-# Evaluator pseudo-code
+# Future evaluator pseudo-code; no agent/evaluator is implemented in Phase 0.
+from nexus_benchmarks.agent_view import build_agent_view
+
+
 def evaluate_case(case, agent):
-    # Agent input: ONLY evidence_catalog + incident_window + affected_services + initial_symptoms
-    agent_input = {
-        "evidence": case["evidence_catalog"],
-        "incident_window": case["incident_window"],
-        "affected_services": case["affected_services"],
-        "initial_symptoms": case["initial_symptoms"],
-    }
-    
-    # Ground truth: NEVER passed to agent
-    ground_truth = case["ground_truth"]
-    
-    # Run investigation
+    agent_input = build_agent_view(case)  # allowlist + fail-closed temporal checks
     result = agent.investigate(agent_input)
-    
-    # Score against ground truth
-    return score(result, ground_truth)
+    return score(result, case["ground_truth"])  # answer key stays evaluator-only
 ```
 
 ### Anti-Leakage Checks (CI)
@@ -168,7 +188,7 @@ CI checks:
 
 ---
 
-## Evaluation Metrics
+## Evaluation Metrics (Future Targets, Not Measured Results)
 
 | Metric | Description | Target |
 |--------|-------------|--------|
@@ -222,8 +242,8 @@ CI checks:
 - Contradicting evidence acknowledged if exists in ground truth
 - Agent never invents evidence IDs
 - Timestamps in evidence are ≤ investigation_cutoff (**enforced** by
-  `check_temporal_integrity`; `incident_window.end` is conditionally excluded
-  from the agent view because it is after the cutoff)
+  `check_temporal_integrity`; `incident_window.end` is always evaluator-only).
+  Collection time and both interval endpoints are also bounded by the cutoff
 
 ### Tools
 - Hypothesis (Python) for property-based tests
@@ -257,7 +277,7 @@ CI checks:
 - Install dependencies (pip install -e ".[dev]" build)
 - Ruff format check
 - Ruff lint                       # lint.ignore = []
-- Pytest (schema, ambiguity, agent-view, execution policy, CLI)
+- Pytest (schema, ambiguity, agent-view, temporal integrity, tool policy, malformed input, semantics, CLI)
 - nexus-benchmark --help / list / validate      # installed console script
 - python -m build
 - ./scripts/wheel_smoke_test.sh   # wheel in a clean venv, outside the checkout
@@ -298,6 +318,9 @@ tests/
 ├── test_agent_view.py           # Agent-visible / evaluator-only boundary
 ├── test_execution_policy.py     # Verification-step execution classes
 ├── test_cli.py                  # CLI + installed-executable smoke tests
+├── test_temporal_integrity.py   # Cutoff, RFC 3339, offsets, windows, CLI negatives
+├── test_malformed_input.py      # Controlled shape diagnostics, no tracebacks
+├── test_fixture_semantics.py    # Observed-incident target and true ambiguity
 ├── unit/                        # Unit tests (Phase 1+)
 │   ├── test_intelligence.py
 │   ├── test_evidence_bundle.py
@@ -335,6 +358,6 @@ pytest --cov=nexus_benchmarks --cov-report=html
 # Only unit tests (when available)
 pytest -m unit
 
-# Only benchmark tests
-pytest -m schema
+# Schema/fixture tests
+pytest tests/test_schema_validation.py -v
 ```

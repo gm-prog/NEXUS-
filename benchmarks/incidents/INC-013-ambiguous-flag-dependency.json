@@ -1,11 +1,11 @@
 {
   "schema_version": "1.0.0",
   "case_id": "INC-013",
-  "title": "Feature Flag Regression: Deployment and Dependency Outage Simultaneous",
-  "category": "feature_flag_regression",
-  "scenario_type": "ambiguous",
+  "title": "External Recommendation Dependency Outage Despite Coincident Flag Enablement",
+  "category": "dependency_regression",
+  "scenario_type": "single_cause",
   "difficulty": "hard",
-  "description": "A deployment enabled a new feature flag 'recommendations-v2' at the same time the recommendation service dependency experienced an outage. Evidence cannot distinguish whether the symptom (recommendation failures) is caused by the new flag code or the dependency outage.",
+  "description": "The target is the cause of the observed recommendation failures at the investigation cutoff, not whether the new flag code has a latent defect. External dependency degradation and failures on both flag-on and flag-off traces support a dependency_failure diagnosis. Coincident flag enablement does not establish causation; behavior against a healthy dependency remains untested.",
   "environment": {
     "name": "production",
     "region": "us-east-1",
@@ -20,7 +20,7 @@
     "Recommendation API returning 500 errors",
     "New feature flag 'recommendations-v2' enabled at 09:55 UTC",
     "Recommendation service (external) showing degraded at 10:00 UTC",
-    "Cannot determine which caused the failures"
+    "Flag-on and flag-off traces both show failing calls to the external recommendation engine"
   ],
   "affected_services": [
     {
@@ -144,39 +144,45 @@
     }
   ],
   "ground_truth": {
-    "root_cause_type": "ambiguous",
+    "root_cause_type": "dependency_failure",
     "primary_service_id": "svc-014-recommendation",
     "trigger_change_id": "",
-    "causal_chain": [],
-    "ambiguity_note": "Both the new feature flag code path AND the external recommendation engine outage started at nearly the same time (09:55 vs 10:00). Traces show BOTH code paths (old and new) fail due to the external dependency. Cannot determine if the new code would have worked had the dependency been healthy. The symptom (recommendation failures) is fully explained by the dependency outage; the flag enablement is coincidental in timing.",
+    "causal_chain": [
+      {
+        "from_type": "trigger",
+        "from_description": "External recommendation engine degradation independent of the feature flag",
+        "to_type": "mechanism",
+        "to_description": "Both flag-on and flag-off request paths encounter failed dependency calls",
+        "evidence_ids": ["ev-003-dependency-outage", "ev-004-trace-flag-path", "ev-005-trace-old-path"],
+        "confidence": 0.9
+      },
+      {
+        "from_type": "mechanism",
+        "from_description": "Unsuccessful recommendation-engine calls propagate through recommendation-service",
+        "to_type": "symptom",
+        "to_description": "Recommendation API errors rise while the shared external engine is degraded",
+        "evidence_ids": ["ev-001-metric-rec-failures", "ev-003-dependency-outage"],
+        "confidence": 0.9
+      }
+    ],
+    "ambiguity_note": "",
     "insufficient_evidence_note": "",
-    "contributing_factors": ["Simultaneous deployment and dependency outage", "No canary for feature flag", "No synthetic monitoring of recommendation engine"]
+    "contributing_factors": ["Dependence on a degraded external recommendation engine", "No graceful degradation for recommendation-engine failures"]
   },
   "expected_diagnosis": {
-    "root_cause_type_match": false,
+    "root_cause_type_match": true,
     "service_localization_match": true,
     "change_attribution_match": false,
-    "min_confidence": 0.3,
+    "min_confidence": 0.85,
     "must_include_evidence_ids": ["ev-001-metric-rec-failures", "ev-003-dependency-outage", "ev-004-trace-flag-path", "ev-005-trace-old-path"],
-    "must_not_claim": ["Feature flag code caused the outage", "Deployment definitely caused the failures"]
+    "must_not_claim": ["Feature flag code caused the outage", "Deployment definitely caused the failures", "The new code is proven defect-free against a healthy dependency"]
   },
   "misleading_or_confounding_signals": [
     "Deployment at 09:55, failures at 10:00 (temporal correlation ≠ causation)",
     "New code path enabled (but old path also fails)",
-    "External dependency degraded (fully explains symptoms)"
+    "Code review approval alone does not establish behavior against a healthy dependency"
   ],
-  "acceptable_alternatives": [
-    {
-      "description": "External recommendation engine outage is the cause; flag enablement coincidental",
-      "evidence_ids": ["ev-003-dependency-outage", "ev-005-trace-old-path"],
-      "confidence_range": [0.7, 0.9]
-    },
-    {
-      "description": "New flag code has bug that manifests only when dependency is slow",
-      "evidence_ids": ["ev-002-deployment-flag-enabled", "ev-004-trace-flag-path"],
-      "confidence_range": [0.3, 0.6]
-    }
-  ],
+  "acceptable_alternatives": [],
   "required_checks": [
     {
       "check_id": "chk-001-dependency-health",
@@ -202,26 +208,25 @@
     },
     {
       "check_id": "chk-003-flag-rollback-test",
-      "description": "PROPOSED CONTROLLED EXPERIMENT (not an investigation query): replay the recommendations-v2 flag enablement in the staging environment against the degraded recommendation engine and compare failure rates with the flag on and off. Requires explicit human authorization; staging target only.",
+      "description": "OPTIONAL POST-DIAGNOSIS RESILIENCE EXPERIMENT, not a required root-cause query: compare flag-on/off behavior in staging using degraded and healthy dependency stubs. This probes response handling and latent defects; it is not needed to attribute the already-observed outage. Explicit human authorization is required; never toggle production autonomously.",
       "tool": "toggle_feature_flag",
-      "expected_outcome": "Failure rate is unchanged with the flag off (proves the dependency outage is the cause)",
+      "expected_outcome": "No experiment result is assumed at the cutoff. A later authorized staging comparison can quantify resilience and test latent defects; it does not replace the existing dependency evidence.",
       "execution_class": "staging_experiment",
       "target_environment": "staging",
       "mutates_state": true,
       "automated_execution_allowed": false,
-      "critical": true
+      "critical": false
     }
   ],
   "remediation_guidance": {
-    "suggestion": "Cannot determine root cause with current evidence. Recommend: 1) Disable flag to isolate, 2) Wait for dependency recovery, 3) Re-enable flag with canary. If failures persist with flag off → dependency cause. If failures stop → flag code cause.",
+    "suggestion": "Escalate the external recommendation-engine degradation and consider human-approved fallback or graceful degradation. Flag rollback is not established as a fix for the observed dependency failures; investigate latent code behavior separately in staging after dependency recovery.",
     "risk_level": "medium",
     "test_plan": [
-      "Disable recommendations-v2 flag",
-      "Monitor recommendation error rate",
-      "If errors persist: escalate to recommendation engine team",
-      "If errors stop: investigate flag code"
+      "Correlate dependency health with errors on both request paths",
+      "Verify recovery of recommendation API errors when the dependency recovers",
+      "Propose a separately authorized staging resilience comparison; do not assume its result"
     ],
-    "rollback_plan": "Disable recommendations-v2 flag immediately"
+    "rollback_plan": "Use only a human-approved mitigation plan; a flag rollback alone is not expected to restore a failing shared dependency"
   },
-  "tags": ["ambiguous", "feature-flag", "dependency-outage", "simultaneous-events", "recommendation-service"]
+  "tags": ["single-cause", "dependency-outage", "feature-flag", "temporal-confounder", "recommendation-service"]
 }

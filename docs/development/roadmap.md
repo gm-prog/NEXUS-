@@ -1,6 +1,8 @@
 # NEXUS Development Roadmap
 
-> **Status:** All phases PLANNED. Phase 0 is the only IMPLEMENTED phase.
+> **Status:** Phase 0 is the only implemented phase; Phase 1+ remain planned.
+> Correction gates are not blanket sign-off: see [Phase 0 Status](phase-0-status.md)
+> for the current NO-GO and outstanding prerequisites.
 
 ---
 
@@ -14,9 +16,9 @@
 - [x] Repository structure with Python packaging
 - [x] Architecture documentation (7 docs)
 - [x] Security documentation (threat model, permission model)
-- [x] 7 ADRs recording key decisions
+- [x] 13 ADRs recording key decisions and corrective trade-offs
 - [x] JSON Schema for incident cases and evaluation results
-- [x] 21 incident scenario fixtures (5 ambiguous/insufficient_evidence)
+- [x] 22 incident scenario fixtures (5 ambiguous/insufficient_evidence)
 - [x] Validation CLI (`nexus-benchmark`)
 - [x] Automated tests (pytest + schema validation)
 - [x] Ruff linting/formatting
@@ -26,7 +28,10 @@
 - [x] All fixtures validate
 - [x] Tests pass
 - [x] CI passes
-- [x] Minimum 20 cases with 5+ ambiguous/insufficient
+- [x] Minimum 20 cases with `max(5, ceil(total * 20%))` ambiguous/insufficient
+- [x] Typed investigation-cutoff and evaluator-only resolution-time boundary
+- [ ] Fixture-author semantic sign-off (INC-016/INC-019 questions remain)
+- [ ] Reviewed dependency lockfile and enforced locked/hashed installs before Phase 1
 
 ---
 

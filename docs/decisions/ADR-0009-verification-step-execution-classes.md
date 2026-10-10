@@ -41,15 +41,23 @@ Invariants, enforced both by JSON Schema `allOf` constraints and by
    `automated_execution_allowed: false`.
 4. `human_approval_required` → `mutates_state: true`,
    `automated_execution_allowed: false`.
-5. A tool whose name implies mutation (`toggle_`, `execute_`, `kill_`,
-   `cache_warmup`, …) may never be classified `read_only`.
+5. A positive `TOOL_REGISTRY` classifies all known verification tools by side
+   effect. Unknown names fail closed in every class; only a tool explicitly
+   registered read-only may be described as an automatable `read_only` step.
+6. Name patterns (`toggle_`, `execute_`, `kill_`, `cache_warmup`, …) are defence
+   in depth against incorrect registration, not a substitute for the registry.
 
-The four previously-unclassified mutating steps were rewritten as *proposed
+The five previously-unclassified mutating steps were rewritten as *proposed
 controlled experiments* (staging target, human authorization required) or, for
 INC-019, as an explicitly gated remediation action. The fixture wording now
 says so, so a reader cannot mistake them for read-only queries.
 
-The tool-name → mutation registry lives in
+**This is fixture metadata validation, not runtime authorization.** Future
+executable tools must enforce capability permissions, read-only credentials and
+argument restrictions at the tool-execution boundary. No tool executor exists
+in Phase 0, and a registry entry is not a grant of permissions.
+
+The tool-name → side-effect registry lives in
 `src/nexus_benchmarks/execution_policy.py`. It is deliberately **not**
 duplicated into JSON Schema: one source of truth is easier to keep correct than
 two that can drift.
@@ -76,8 +84,10 @@ two that can drift.
 **Cons:**
 
 - Four boolean/enum fields per check make fixtures more verbose.
-- The tool-name heuristic is a prefix/contains test; a mutating tool with an
-  innocuous name would need to be added to the registry by hand.
+- Every new tool must be reviewed and registered by hand before fixtures can
+  use it. Unknown names fail closed rather than being implicitly safe.
+- Side-effect declarations do not verify a real implementation or its SQL,
+  command or other arguments; future execution-boundary controls remain required.
 - Scoring "investigation coverage" must now decide whether to require
   non-`read_only` steps to be *proposed* rather than *performed*.
 

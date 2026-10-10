@@ -36,6 +36,8 @@ This directory contains Architecture Decision Records for NEXUS.
 | [ADR-0009](ADR-0009-verification-step-execution-classes.md) | Execution Classification for Benchmark Verification Steps | Accepted | 2026-10-10 |
 | [ADR-0010](ADR-0010-agent-view-projection.md) | Allowlisted Agent-View Projection for Benchmark Cases | Accepted | 2026-10-10 |
 | [ADR-0011](ADR-0011-benchmark-assets-in-the-distribution.md) | Benchmark Assets Ship Inside the Distribution | Accepted | 2026-10-10 |
+| [ADR-0012](ADR-0012-temporal-cutoff-integrity.md) | Fail-Closed Temporal Cutoff Integrity | Accepted | 2026-10-10 |
+| [ADR-0013](ADR-0013-observed-incident-target.md) | Score the Observed Incident, Not a Hypothetical Latent Defect | Accepted | 2026-10-10 |
 
 ## When to Create an ADR
 
