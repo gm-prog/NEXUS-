@@ -111,10 +111,18 @@ NEXUS testing follows a layered approach aligned with the architecture:
 
 ### Principle
 The investigator sees **only** information available at the investigation cutoff:
-- Telemetry up to `incident_window.end`
-- Code at `incident_window.end` (no future commits)
-- Deployments up to `incident_window.end`
+- Telemetry up to `incident_window.investigation_cutoff`
+- Code at `incident_window.investigation_cutoff` (no future commits)
+- Deployments up to `incident_window.investigation_cutoff`
 - Runbooks/docs as they existed at cutoff
+
+> **Correction (2026-10-10, Phase 0 audit).** This list previously read
+> "`incident_window.end`". That was a contradiction: `investigation_cutoff` is
+> the boundary of the frozen snapshot, and in every fixture `end` is *later*
+> than the cutoff (the investigation happens mid-incident). Passing `end` to
+> the agent would tell it when the incident resolved. The bullets now say
+> `investigation_cutoff`, matching the invariant already listed below and the
+> validator in `src/nexus_benchmarks/temporal.py`.
 
 ### Implementation
 ```python
@@ -213,7 +221,9 @@ CI checks:
 - Causal chain forms valid DAG (no cycles)
 - Contradicting evidence acknowledged if exists in ground truth
 - Agent never invents evidence IDs
-- Timestamps in evidence are ≤ investigation_cutoff
+- Timestamps in evidence are ≤ investigation_cutoff (**enforced** by
+  `check_temporal_integrity`; `incident_window.end` is conditionally excluded
+  from the agent view because it is after the cutoff)
 
 ### Tools
 - Hypothesis (Python) for property-based tests

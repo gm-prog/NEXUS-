@@ -9,6 +9,31 @@ on:
     branches: [master]
   workflow_dispatch:
 
+# Action pins (verified against upstream release notes, 2026-10-10):
+#
+#   actions/checkout@v4 and actions/setup-python@v5 declare `using: node20`.
+#   GitHub deprecated Node 20 for JavaScript actions: Node 20 actions were
+#   forced onto Node 24 from 2026-06-02 and Node 20 is removed from the runner
+#   from 2026-09-16, so both majors now emit end-of-job warnings and are on
+#   borrowed time.
+#
+#   actions/checkout@v7.0.1        -> `using: node24`
+#   actions/setup-python@v7.0.0    -> `using: node24`
+#
+# Breaking changes reviewed before bumping, both no-ops for this workflow:
+#   * checkout v5.1.0 "backport `allow-unsafe-pr-checkout`" — only changes
+#     `pull_request_target` checkout defaults. This workflow triggers on
+#     push / pull_request / workflow_dispatch only, never pull_request_target.
+#   * setup-python v7.0.0 "Remove the pip-install input" — this workflow never
+#     sets `pip-install`; it installs via `python -m pip install`.
+#
+# Both node24 actions require runner v2.327.1 or later; `ubuntu-latest`
+# satisfies that. If a hosted run ever reports a runner-version failure, fall
+# back to checkout@v5.1.0 / setup-python@v6.3.0, which are also node24.
+#
+# Follow-up (owner: NEXUS maintainers; trigger: next CI maintenance window):
+# move to SHA-pinned actions once a Dependabot or pinning policy is adopted.
+
 permissions:
   contents: read
 
@@ -23,10 +48,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
           cache: "pip"
@@ -59,10 +84,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7.0.0
         with:
           python-version: "3.12"
           cache: "pip"

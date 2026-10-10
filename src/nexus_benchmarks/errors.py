@@ -39,6 +39,31 @@ class CaseLoadError(NexusBenchmarkError):
         super().__init__(f"Invalid JSON in {path}: {detail}")
 
 
+class MalformedCaseError(NexusBenchmarkError):
+    """Raised when a case has a shape the tooling cannot project or classify.
+
+    Distinct from :class:`AgentViewError`: this is a structural defect (for
+    example ``evidence_catalog: [null]``), not an answer-leakage defect.
+    """
+
+    def __init__(self, case_id: object, detail: str) -> None:
+        super().__init__(f"Case {case_id}: {detail}")
+
+    @classmethod
+    def case_not_an_object(cls, value: object) -> "MalformedCaseError":
+        """Build the error for a case file whose root is not a JSON object."""
+        found = "null" if value is None else type(value).__name__
+        return cls("<malformed case>", f"case must be a JSON object, got {found}")
+
+    @classmethod
+    def wrong_type(
+        cls, case_id: object, subject: str, expected: str, value: object
+    ) -> "MalformedCaseError":
+        """Build the error for a field that has the wrong JSON type."""
+        found = "null" if value is None else type(value).__name__
+        return cls(case_id, f"{subject} must be {expected}, got {found}")
+
+
 class AgentViewError(NexusBenchmarkError):
     """Raised when a case cannot be projected onto the agent-visible view.
 

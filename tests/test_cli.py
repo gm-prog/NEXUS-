@@ -57,6 +57,7 @@ def test_validate_all_passes(runner):
     assert "VALID" in result.output
     assert "Composition checks: PASSED" in result.output
     assert "Execution policy checks: PASSED" in result.output
+    assert "Temporal integrity checks: PASSED" in result.output
     assert "Agent-view separation checks: PASSED" in result.output
 
 

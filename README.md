@@ -112,9 +112,9 @@ NEXUS does not claim to be an all-knowing autonomous SRE. The design favors expl
 | Benchmark schemas (JSON Schema) | ✅ IMPLEMENTED |
 | 21 incident scenario fixtures | ✅ IMPLEMENTED |
 | Validation CLI (`nexus-benchmark`) | ✅ IMPLEMENTED (installed console script) |
-| Agent-view / ground-truth separation | ✅ IMPLEMENTED (allowlisted projection, tested) |
-| Verification-step execution policy | ✅ IMPLEMENTED (`read_only` / `staging_experiment` / `human_approval_required`) |
-| Automated tests (pytest) | ✅ IMPLEMENTED (113 tests) |
+| Agent-view / ground-truth separation | ✅ IMPLEMENTED (allowlisted projection + temporal cutoff, tested) |
+| Verification-step execution policy | ✅ IMPLEMENTED (`read_only` / `staging_experiment` / `human_approval_required`, registered-tool allowlist) |
+| Automated tests (pytest) | ✅ IMPLEMENTED (218 tests) |
 | Linting/formatting (Ruff) | ✅ IMPLEMENTED |
 | CI (GitHub Actions) | ✅ IMPLEMENTED (triggers on `master`) |
 | Dependency lockfile | ❌ NOT PRESENT — minimum version bounds only |

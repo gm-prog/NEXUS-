@@ -6,7 +6,14 @@ This project is in Phase 0 (pre-alpha). No security support is provided for any 
 
 ## Reporting a Vulnerability
 
-If you discover a security issue in this codebase (e.g., in the validation CLI, schema processing, or test infrastructure), please report it by opening a GitHub Security Advisory or emailing security@nexus.local.
+If you discover a security issue in this codebase (e.g., in the validation
+CLI, schema processing, or test infrastructure), please report it by opening a
+[GitHub Security Advisory](https://github.com/gm-prog/NEXUS-/security/advisories/new).
+
+That is the only reporting channel. This project does not operate a security
+mailbox; an earlier revision of this file advertised `security@nexus.local`,
+which is a placeholder domain that nobody monitors, so reports sent there would
+have been silently lost.
 
 Do not file public issues for security vulnerabilities.
 
@@ -41,6 +48,7 @@ Key principles:
   only enforces `format: date-time` when a `FormatChecker` backend is present.
 - CI installs from PyPI with `pip` and does not use hash checking.
 - No arbitrary code execution from benchmark fixtures (they are data, not code).
-- Tracked follow-up: adopt a lockfile (uv or pip-compile) and install with
-  `--require-hashes` or `uv sync --locked` before Phase 1. See
-  [CONTRIBUTING.md](CONTRIBUTING.md).
+- Tracked follow-up (**not** started): adopt a lockfile (uv or pip-compile) and
+  install with `--require-hashes` or `uv sync --locked`. Owner: NEXUS
+  maintainers. Trigger: start of Phase 1, before any dependency that reaches
+  production data is added. See [CONTRIBUTING.md](CONTRIBUTING.md#dependency-installation).

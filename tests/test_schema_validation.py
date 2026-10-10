@@ -217,3 +217,62 @@ def test_committed_corpus_has_no_composition_errors(corpus):
 
 def test_committed_corpus_has_no_execution_policy_errors(corpus):
     assert check_execution_policy(corpus) == []
+
+
+# --- Cross-field semantic invariants --------------------------------------
+
+
+def test_change_attribution_requires_a_trigger_change(corpus):
+    """A case cannot demand attribution to a change it does not name."""
+    for case in corpus:
+        trigger = case["ground_truth"].get("trigger_change_id") or ""
+        if case["expected_diagnosis"]["change_attribution_match"]:
+            assert trigger, f"{case['case_id']}: attribution required but no trigger named"
+
+
+MIN_ALTERNATIVES_FOR_AMBIGUOUS = 2
+
+
+def test_ambiguous_cases_offer_at_least_two_alternatives(corpus):
+    """'ambiguous' must mean a real choice, not 'single_cause with extra steps'."""
+    for case in corpus:
+        if case["scenario_type"] == "ambiguous":
+            count = len(case["acceptable_alternatives"])
+            assert count >= MIN_ALTERNATIVES_FOR_AMBIGUOUS, case["case_id"]
+
+
+def test_ambiguous_cases_forbid_at_least_one_claim(corpus):
+    """An ambiguous case must say what may not be asserted confidently."""
+    for case in corpus:
+        if case["scenario_type"] == "ambiguous":
+            assert case["expected_diagnosis"]["must_not_claim"], case["case_id"]
+
+
+def test_confidence_ranges_are_well_ordered(corpus):
+    for case in corpus:
+        for index, alternative in enumerate(case["acceptable_alternatives"]):
+            low, high = alternative["confidence_range"]
+            assert 0.0 <= low <= high <= 1.0, (case["case_id"], index)
+
+
+def test_min_confidence_never_exceeds_the_best_alternative(corpus):
+    """The required confidence floor must be reachable by some hypothesis."""
+    for case in corpus:
+        floor = case["expected_diagnosis"]["min_confidence"]
+        best = max(
+            (alternative["confidence_range"][1] for alternative in case["acceptable_alternatives"]),
+            default=1.0,
+        )
+        assert floor <= best, f"{case['case_id']}: floor {floor} exceeds best upper bound {best}"
+
+
+def test_every_referenced_evidence_id_resolves(corpus):
+    """No dangling evidence references in must_include, alternatives or chains."""
+    for case in corpus:
+        catalog = {item["evidence_id"] for item in case["evidence_catalog"]}
+        referenced = set(case["expected_diagnosis"]["must_include_evidence_ids"])
+        for alternative in case["acceptable_alternatives"]:
+            referenced.update(alternative["evidence_ids"])
+        for link in case["ground_truth"].get("causal_chain", []):
+            referenced.update(link.get("evidence_ids", []))
+        assert referenced <= catalog, f"{case['case_id']}: {sorted(referenced - catalog)}"

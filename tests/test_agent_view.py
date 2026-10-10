@@ -12,6 +12,7 @@ import pytest
 from nexus_benchmarks.agent_view import (
     AGENT_VISIBLE_NESTED_KEYS,
     AGENT_VISIBLE_ROOT_KEYS,
+    CONDITIONALLY_EXCLUDED_KEYS,
     EVALUATOR_ONLY_ROOT_KEYS,
     build_agent_view,
     evaluator_only_values,
@@ -155,3 +156,14 @@ def test_allowlists_match_the_schema(incident_schema):
             assert declared - allowed == {"impact"}
         else:
             assert declared - allowed == set(), f"{name}: unclassified nested properties"
+
+
+def test_conditionally_excluded_keys_are_subsets_of_the_allowlist(incident_schema):
+    """A conditional exclusion may only narrow an already-allowlisted field."""
+    for name, excluded in CONDITIONALLY_EXCLUDED_KEYS.items():
+        assert name in AGENT_VISIBLE_NESTED_KEYS, f"{name}: not an allowlisted object field"
+        spec = incident_schema["properties"][name]
+        declared = set((spec.get("items") or spec)["properties"])
+        assert excluded <= declared, f"{name}: excludes a property the schema omits"
+        assert excluded <= AGENT_VISIBLE_NESTED_KEYS[name], f"{name}: unknown excluded keys"
+        assert excluded, f"{name}: empty exclusion set is misleading"

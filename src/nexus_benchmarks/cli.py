@@ -25,7 +25,8 @@ from nexus_benchmarks.assets import (
     find_benchmarks_root,
 )
 from nexus_benchmarks.errors import CaseLoadError, SchemaLoadError
-from nexus_benchmarks.execution_policy import check_execution_policy
+from nexus_benchmarks.execution_policy import check_case_execution_policy
+from nexus_benchmarks.temporal import check_case_temporal_integrity
 
 BENCHMARKS_ROOT = find_benchmarks_root()
 SCHEMA_DIR = BENCHMARKS_ROOT / SCHEMA_DIR_NAME
@@ -158,11 +159,21 @@ def check_composition(cases: list[dict]) -> list[str]:
 
 
 def check_benchmark_policy(cases: list[dict]) -> list[str]:
-    """Check per-case invariants that are not expressible as JSON Schema alone."""
-    errors = check_execution_policy(cases)
+    """Check per-case invariants that are not expressible as JSON Schema alone.
+
+    Each check is called per case and is structurally defensive, so a malformed
+    case yields a controlled diagnostic instead of an exception.
+    """
+    errors: list[str] = []
     for case in cases:
+        errors.extend(check_case_execution_policy(case))
+        errors.extend(check_case_temporal_integrity(case))
         errors.extend(find_leaks(case))
     return errors
+
+
+#: Checks that cannot run meaningfully on a case that failed schema validation.
+DEPENDENT_CHECKS = "execution policy, temporal integrity and agent-view separation"
 
 
 def validate_all(
@@ -180,6 +191,11 @@ def validate_all(
     cases_to_validate = []
     for filepath in case_files:
         case = load_case(filepath)
+        if not isinstance(case, dict):
+            all_errors.append(
+                f"{filepath.name}: root value must be a JSON object, got {_type_name(case)}"
+            )
+            continue
         if selected_case_id:
             if case.get("case_id") == selected_case_id:
                 cases_to_validate.append((filepath, case))
@@ -192,14 +208,21 @@ def validate_all(
     if selected_case_id and len(cases_to_validate) > 1:
         return False, [f"Multiple cases claim ID: {selected_case_id}"]
 
+    schema_valid_cases = []
     for filepath, case in cases_to_validate:
-        all_errors.extend(validate_case(case, incident_validator, filepath))
+        case_errors = validate_case(case, incident_validator, filepath)
+        all_errors.extend(case_errors)
+        if case_errors:
+            # Policy, temporal and projection checks assume the schema holds.
+            # Running them on a structurally invalid case would raise.
+            all_errors.append(f"{filepath.name}: skipped {DEPENDENT_CHECKS} checks")
+            continue
+        schema_valid_cases.append(case)
 
-    cases = [case for _, case in cases_to_validate]
-    all_errors.extend(check_benchmark_policy(cases))
+    all_errors.extend(check_benchmark_policy(schema_valid_cases))
 
     if not selected_case_id:
-        all_errors.extend(check_composition(cases))
+        all_errors.extend(check_composition([case for _, case in cases_to_validate]))
 
     return len(all_errors) == 0, all_errors
 
@@ -209,6 +232,15 @@ def list_cases() -> list[dict]:
     results = []
     for filepath in discover_cases():
         case = load_case(filepath)
+        if not isinstance(case, dict):
+            results.append({
+                "case_id": filepath.stem,
+                "title": f"<malformed: {_type_name(case)}>",
+                "category": "",
+                "scenario_type": "",
+                "difficulty": "",
+            })
+            continue
         results.append({
             "case_id": case.get("case_id", "UNKNOWN"),
             "title": case.get("title", ""),
@@ -217,6 +249,10 @@ def list_cases() -> list[dict]:
             "difficulty": case.get("difficulty", ""),
         })
     return results
+
+
+def _type_name(value: object) -> str:
+    return "null" if value is None else type(value).__name__
 
 
 @click.group()
@@ -248,6 +284,7 @@ def validate(case_id: str | None) -> None:
         click.echo(f"\nAll {case_count} cases: VALID")
         click.echo("Composition checks: PASSED")
         click.echo("Execution policy checks: PASSED")
+        click.echo("Temporal integrity checks: PASSED")
         click.echo("Agent-view separation checks: PASSED")
 
     click.echo("\nNote: This validator checks schema compliance and benchmark hygiene only.")

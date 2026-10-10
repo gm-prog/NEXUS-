@@ -21,7 +21,8 @@ bounds only (for example `jsonschema>=4.23.0`); it does not pin exact versions
 and there is no `uv.lock`, `requirements.txt` or `poetry.lock` in the
 repository. Repeatable installs are therefore *not* guaranteed today. Adopting
 a lockfile and installing with `--require-hashes` / `uv sync --locked` is a
-tracked Phase 1 follow-up (see [SECURITY.md](SECURITY.md#supply-chain)).
+tracked Phase 1 follow-up, not started (owner: NEXUS maintainers; trigger:
+start of Phase 1 — see [SECURITY.md](SECURITY.md#supply-chain)).
 
 ## Running Checks
 
@@ -59,9 +60,12 @@ CI runs the same commands. Do not skip checks locally.
 - Must validate against `benchmarks/schema/incident-case.schema.json`
 - `case_id` must match filename prefix (`INC-XXX`)
 - `schema_version` must be current (see schema)
-- All timestamps: ISO 8601 UTC (`2024-01-15T10:30:00Z`). They are really
-  validated — `rfc3339-validator` is a runtime dependency and the CLI enables
-  `jsonschema.FormatChecker`.
+- All timestamps: **strict** RFC 3339 with a mandatory UTC designator or
+  numeric offset (`2024-01-15T10:30:00Z`, `2024-01-15T16:00:00+05:30`). They
+  are really validated twice: `rfc3339-validator` (a runtime dependency, so
+  `jsonschema.FormatChecker` actually enforces `format: date-time`) checks the
+  *string shape*, and `src/nexus_benchmarks/temporal.py` parses each value into
+  a timezone-aware `datetime` for the cutoff comparisons below.
 - Identifiers are **stable slugs**, not UUIDs: services match
   `^svc-[a-z0-9]+(?:-[a-z0-9]+)*$` (e.g. `svc-001-payment`), environments match
   `^env-[a-z0-9]+(?:-[a-z0-9]+)*$` (e.g. `env-prod-us-east-1`).
@@ -81,6 +85,32 @@ The projection **fails closed**: an unclassified top-level key aborts the
 projection instead of being forwarded. `tests/test_agent_view.py` pins this
 boundary and proves it is non-vacuous by injecting leaks.
 
+### Temporal Cutoff (frozen snapshot)
+
+An investigator may only see what was known at
+`incident_window.investigation_cutoff`. Two rules enforce this:
+
+1. `incident_window.end` is **conditionally excluded** from the projection. It
+   is dropped unless it can be *proved* to be at or before the cutoff; if the
+   cutoff or the end is missing, unparseable or naive, the field is dropped.
+   "Cannot prove it is in the past" must never become "assume it is in the
+   past". In all 21 current fixtures `end` is after the cutoff, so today the
+   field is never model-visible.
+2. No agent-visible timestamp may be after the cutoff:
+   `evidence_catalog[].event_time`, `.collection_time`, `.time_window_end`,
+   `changes[].timestamp` and `incident_window.start`. Reversed windows
+   (`start` after `end`, `time_window_start` after `time_window_end`) are also
+   rejected.
+
+Comparisons are made between timezone-aware `datetime`s in UTC, never between
+strings: `2024-01-15T09:16:00-01:00` sorts *before*
+`2024-01-15T10:15:00Z` as text but is a *later* instant, and a lexicographic
+check would have let that future record through.
+`tests/test_temporal_integrity.py` pins both directions.
+
+This is metadata validation of what the fixture *claims*, not a runtime
+control: nothing here grants, denies or executes a tool call.
+
 ### Verification Steps (`required_checks[]`)
 
 Every entry must declare `execution_class`, `target_environment`,
@@ -92,10 +122,22 @@ Every entry must declare `execution_class`, `target_environment`,
 | `staging_experiment` | Proposed controlled experiment | `true` | `false` | `staging` / `sandbox` |
 | `human_approval_required` | Needs an explicit human gate | `true` | `false` | any |
 
-A tool whose name implies mutation (`toggle_feature_flag`,
-`execute_db_command`, `cache_warmup`, ...) may never be classified
-`read_only`. The registry lives in `src/nexus_benchmarks/execution_policy.py`
-and is enforced by `nexus-benchmark validate`.
+Tool side effects come from a **positive registry**, `TOOL_REGISTRY` in
+`src/nexus_benchmarks/execution_policy.py`, which names every tool the
+benchmark knows about and classifies it `read_only` or `mutating`. A step may
+not be `read_only` if its tool is registered mutating, and a tool registered
+`read_only` may not declare `mutates_state: true`.
+
+An **unregistered** tool name is reported and never defaults to `read_only` —
+adding `set_feature_flag`, `promote_deployment` or `run_migration` to a fixture
+fails `nexus-benchmark validate` until it is explicitly registered. The
+prefix/exact-name patterns (`MUTATING_TOOL_PREFIXES`, `MUTATING_TOOL_NAMES`)
+are kept only as defence in depth, to catch a name that is registered
+`read_only` but looks mutating.
+
+**Registering a tool is a metadata declaration, not runtime authorisation.**
+A future agent must still enforce capability permissions at the tool-execution
+boundary.
 
 ### Adding a New Incident Case
 
@@ -106,7 +148,9 @@ and is enforced by `nexus-benchmark validate`.
 5. Classify every `required_checks[]` entry (see the table above)
 6. Keep at least 20% of the suite ambiguous/insufficient-evidence — the CLI
    enforces the ratio over the whole benchmark, not a fixed count of five
-7. Run `nexus-benchmark validate` — must pass
+7. Register any new `required_checks[].tool` in `TOOL_REGISTRY`; unregistered
+   tools fail closed
+8. Run `nexus-benchmark validate` — must pass
 8. Run `pytest` — all tests must pass
 
 ### Modifying an Existing Case
