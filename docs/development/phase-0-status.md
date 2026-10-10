@@ -197,10 +197,16 @@ It does NOT evaluate AI diagnosis quality or accuracy.
 Hosted on GitHub Actions, executed by GitHub's runners — not by this
 environment.
 
-**Run:** <https://github.com/gm-prog/NEXUS-/actions/runs/38043944704>
-**Commit:** `8e59e5039b67bfc34cca9ff33a2ef345eb348515`
-**Event:** `pull_request` against `master` ([PR #1](https://github.com/gm-prog/NEXUS-/pull/1))
-**Conclusion:** ✅ success (2026-10-10T10:09:52Z)
+| Run | Commit | Event | Conclusion |
+|-----|--------|-------|------------|
+| [38043944704](https://github.com/gm-prog/NEXUS-/actions/runs/38043944704) | `8e59e5039b67bfc34cca9ff33a2ef345eb348515` (corrective commit) | `pull_request` → `master` | ✅ success |
+| [38044279834](https://github.com/gm-prog/NEXUS-/actions/runs/38044279834) | `5245f2cecf27e5e1767698bcae6dc69f9942beb6` (status-report commit) | `pull_request` → `master` | ✅ success |
+
+Pull request: [#1](https://github.com/gm-prog/NEXUS-/pull/1). Every workflow run
+recorded for this branch has concluded successfully.
+
+Job results for the corrective commit's run (all three jobs, GitHub-hosted
+`ubuntu-latest`):
 
 | Job | Python | Conclusion |
 |-----|--------|------------|
