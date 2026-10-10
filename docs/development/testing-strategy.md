@@ -283,7 +283,9 @@ CI checks:
 ```
 Runs on Python 3.11 and 3.12, triggered by pushes and pull requests against
 `master`. Actions are full-SHA pinned. Tests exercise the real offline uv
-lock checker, plus the build-system-only drift guard. The installed wheel's
+lock checker, plus the build-system-only drift guard. Stale-manifest integration
+probes allow read-only index metadata access for uv's mismatch diagnostic;
+current-lock/build-only and empty-cache fail-closed probes stay offline. The installed wheel's
 fixture manifest and all fixture bytes must match the checkout; its runtime
 closure is exported from the same lock and installed with required hashes,
 without a second dependency resolver. Local versus exact-head hosted evidence

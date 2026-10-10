@@ -122,7 +122,12 @@ all use Node 24. Tool bootstrap uses setup-uv's release checksums.
 - uv does not track build-system-only constraint edits. The setup script
   requires exact mirrored dev constraints before the editable build; updating
   both makes uv's normal metadata check enforce the change. A real offline
-  subprocess regression demonstrates and closes this bypass.
+  subprocess regression demonstrates and closes this bypass. The three
+  dependency-drift integration probes permit read-only index metadata access:
+  uv re-resolves changed constraints before emitting its specific --check
+  mismatch. They assert rejection and lock immutability, never install or
+  rewrite anything. A separate empty-cache regression proves offline
+  current-lock acceptance and stale-lock fail-closed behavior.
 - Build wheel/sdist with `--no-isolation`. Export the locked runtime closure
   with hashes, require binary/hash-matching artifacts in a clean venv, then
   install the local wheel `--no-deps --no-index`. Check installed dependencies,

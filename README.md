@@ -114,7 +114,7 @@ NEXUS does not claim to be an all-knowing autonomous SRE. The design favors expl
 | Validation CLI (`nexus-benchmark`) | ✅ IMPLEMENTED (installed console script) |
 | Agent-view / ground-truth separation | ✅ IMPLEMENTED (allowlisted projection + temporal cutoff, tested) |
 | Verification-step execution policy | ✅ IMPLEMENTED (`read_only` / `staging_experiment` / `human_approval_required`, registered-tool allowlist) |
-| Automated tests (pytest) | ✅ VERIFIED (382 local tests; dated local/hosted evidence in status report) |
+| Automated tests (pytest) | ✅ VERIFIED (383 local tests; dated local/hosted evidence in status report) |
 | Linting/formatting (Ruff) | ✅ IMPLEMENTED |
 | CI (GitHub Actions) | ✅ IMPLEMENTED (triggers on `master`) |
 | Dependency lockfile | ✅ COMMITTED (`uv.lock`; strict runtime/dev/build installs and hash-checked wheel smoke) |

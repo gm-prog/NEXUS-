@@ -1,7 +1,11 @@
 """Exercise the real lock checker and the no-isolation build-closure guard.
 
 These tests require the pinned uv tool; absence is a failure, never a skip.
-All subprocess checks are offline and operate on disposable manifest copies.
+All checks operate on disposable manifest copies. Stale-manifest integration
+probes may read index metadata: uv must resolve the changed constraints before
+reporting its --check mismatch. Baseline/build-only and empty-cache checks are
+offline. No probe installs a differently resolved environment or rewrites
+the committed lock.
 """
 
 import os
@@ -38,6 +42,7 @@ def test_lock_is_current_without_network_or_updates(uv_path, locked_project):
     assert (locked_project / "uv.lock").read_bytes() == before
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize(
     ("old", "new"),
     [
@@ -52,9 +57,26 @@ def test_lock_rejects_runtime_lint_and_build_manifest_drift(uv_path, locked_proj
     assert old in text
     manifest.write_text(text.replace(old, new, 1), encoding="utf-8")
     before = (locked_project / "uv.lock").read_bytes()
-    result = _check_lock(uv_path, locked_project)
+    # A cold CI installation cache lacks registry-resolution metadata. Let
+    # this read-only integration probe fetch it, so rejection is specifically
+    # manifest drift, not merely an unavailable offline package index.
+    result = _check_lock(uv_path, locked_project, offline=False)
     assert result.returncode == 1, result.stderr
     assert "lockfile" in result.stderr and "needs to be updated" in result.stderr
+    assert (locked_project / "uv.lock").read_bytes() == before
+
+
+def test_empty_cache_accepts_current_lock_but_rejects_drift_offline(uv_path, locked_project):
+    cache = locked_project / "empty-cache"
+    before = (locked_project / "uv.lock").read_bytes()
+    baseline = _check_lock(uv_path, locked_project, cache_dir=cache)
+    assert baseline.returncode == 0, baseline.stderr
+    manifest = locked_project / "pyproject.toml"
+    text = manifest.read_text(encoding="utf-8")
+    manifest.write_text(text.replace("click>=8.1.0", "click>=8.2.0"), encoding="utf-8")
+    stale = _check_lock(uv_path, locked_project, cache_dir=cache)
+    assert stale.returncode == 1, stale.stderr
+    assert "No solution found" in stale.stderr and "network was disabled" in stale.stderr
     assert (locked_project / "uv.lock").read_bytes() == before
 
 
@@ -109,20 +131,27 @@ def test_lock_contains_complete_versioned_hashed_closure():
         assert all(item["url"].startswith("https://files.pythonhosted.org/") for item in artifacts)
 
 
-def _check_lock(uv_path, project):
+def _check_lock(uv_path, project, *, offline=True, cache_dir=None):
+    command = [
+        uv_path,
+        "lock",
+        "--check",
+        "--directory",
+        str(project),
+        "--python",
+        sys.executable,
+    ]
+    env = _offline_env()
+    if offline:
+        command.append("--offline")
+    else:
+        env["UV_OFFLINE"] = "false"
+    if cache_dir is not None:
+        env["UV_CACHE_DIR"] = str(cache_dir)
     return subprocess.run(
-        [
-            uv_path,
-            "lock",
-            "--check",
-            "--offline",
-            "--directory",
-            str(project),
-            "--python",
-            sys.executable,
-        ],
+        command,
         cwd=project,
-        env=_offline_env(),
+        env=env,
         text=True,
         capture_output=True,
         check=False,

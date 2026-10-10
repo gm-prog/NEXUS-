@@ -55,7 +55,7 @@ is historical evidence, not the sign-off result for these new changes.
 | INC-016 | Keep an insufficient-evidence target: instrumentation defect known, actual failure rate/alert validity unestablished | Structured factor/alignment fields; conditional 8/2=4%, 8× baseline and 16× reported arithmetic; uncertainty/attribution/confidence and known-contradiction checks |
 | INC-019 | Open explicit SHARE transaction; evidenced conflicting DML waits, PostgreSQL lock timeouts, not a plain-SELECT/deadlock story | SQL/transaction identity, granted Share and compatible AccessShare locks, waiting RowExclusive locks and matching blocking PIDs; human-gated transaction remediation |
 | Causal-text leakage | Scan all from/to descriptions and check outcomes against projected strings/keys, including quotes/newlines | Every corpus causal description copied into evidence is caught; multiple destinations and installed-CLI negatives; legitimate paraphrase/overlap tests |
-| Dependency lock/build bypasses | Commit `uv.lock`; enforce strict locked runtime/dev/build installs and hash-checked clean wheel installation | Real offline runtime/lint/build drift rejection, including uv's build-system-only blind spot and the mirrored-dev guard |
+| Dependency lock/build bypasses | Commit `uv.lock`; enforce strict locked runtime/dev/build installs and hash-checked clean wheel installation | Real runtime/lint/build mismatch/no-rewrite checks, plus offline empty-cache rejection and the build-system-only mirrored-dev guard |
 
 Details and authoring decisions:
 [ADR-0014](../decisions/ADR-0014-phase-0-sign-off-corrections.md).
@@ -115,6 +115,18 @@ cross-references remain legitimate, not answer prose.
 - Pins improve dependency repeatability; OS images/Python patch releases are
   not locked. No byte-identical-build or vulnerability-absence claim is made.
 
+
+The first hosted candidate (`4cc8ec582855f962b5413060bb593904c0e3e943`,
+[run 38059076421](https://github.com/gm-prog/NEXUS-/actions/runs/38059076421))
+passed wheel smoke but failed both pytest jobs. A fresh local checkout/cache
+reproduced three newly added drift probes: offline index metadata was missing,
+so uv rejected with a resolution error rather than the asserted stale-lock
+message. No production gate or assertion was removed. Those integration probes
+now allow read-only index metadata to test the **same specific mismatch** and
+lock immutability; a new truly empty-cache test separately verifies offline
+current-lock acceptance and stale-lock rejection. No probe installs an unlocked
+environment. The earlier failed run is historical, not final-head evidence.
+
 ## Executed Local Validation
 
 Python **3.11.2**, uv **0.13.0**, Linux. Raw local logs are in ignored
@@ -125,8 +137,9 @@ Python **3.11.2**, uv **0.13.0**, Linux. Raw local logs are in ignored
 | `./scripts/locked_sync.sh` | PASS: strict lock, locked backend/helper, no isolated build |
 | `.venv/bin/ruff format --check .` | PASS: 49 files already formatted |
 | `.venv/bin/ruff check .` | PASS: no lint exemptions added; `lint.ignore = []` |
-| `.venv/bin/python -m pytest -v` | PASS: **382 passed, no skips** |
-| Targeted agent-view / fixture semantics / dependency lock tests | PASS: **68 passed** |
+| `.venv/bin/python -m pytest -v` | PASS: **383 passed, no skips** |
+| Targeted agent-view / fixture semantics / dependency lock tests | PASS: **69 passed** |
+| Cold checkout / installation-only cache reproduction | PASS: **383 passed**, including explicit empty-cache offline rejection |
 | Installed CLI `--help` / `list` / `validate` | PASS: **all 22 cases VALID**, composition/execution/temporal/separation passed |
 | `./scripts/wheel_smoke_test.sh` | PASS: no-isolation wheel/sdist build, clean hash-locked runtime install, dependency check, installed CLI outside checkout |
 | Wheel fixture integrity | PASS: exact **22-fixture manifest and all source bytes match** |

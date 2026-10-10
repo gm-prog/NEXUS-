@@ -38,7 +38,11 @@ No isolated build environment or unbounded pip upgrade is used.
 include `build-system.requires` in its project dependency metadata check; the
 setup script rejects build-only changes that evade `uv lock --check`. Update
 both declarations together, then regenerate the lock. A real subprocess
-regression covers this bypass, as well as runtime/lint/build dependency drift.
+regression covers this bypass. Runtime/lint/build drift integration probes
+retain explicit uv mismatch/no-rewrite assertions and may read PyPI index
+metadata on a cold cache; an additional empty-cache test proves current-lock
+acceptance and stale-lock fail-closed behavior offline. These probes operate
+only on temporary copies and never install a differently resolved environment.
 
 ### Deliberate Lock Updates
 
