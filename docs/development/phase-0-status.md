@@ -194,7 +194,42 @@ It does NOT evaluate AI diagnosis quality or accuracy.
 
 ## Hosted Validation Results
 
-HOSTED_RUN_SECTION
+Hosted on GitHub Actions, executed by GitHub's runners — not by this
+environment.
+
+**Run:** <https://github.com/gm-prog/NEXUS-/actions/runs/38043944704>
+**Commit:** `8e59e5039b67bfc34cca9ff33a2ef345eb348515`
+**Event:** `pull_request` against `master` ([PR #1](https://github.com/gm-prog/NEXUS-/pull/1))
+**Conclusion:** ✅ success (2026-10-10T10:09:52Z)
+
+| Job | Python | Conclusion |
+|-----|--------|------------|
+| Validate | 3.11 | ✅ success |
+| Validate | 3.12 | ✅ success |
+| Wheel smoke test | 3.12 | ✅ success |
+
+Steps executed in each `Validate` job:
+
+| Step | Result |
+|------|--------|
+| Install dependencies (`pip install -e ".[dev]" build`) | ✅ success |
+| Check formatting (Ruff) | ✅ success |
+| Lint (Ruff) | ✅ success |
+| Run tests (pytest) | ✅ success |
+| Installed CLI help | ✅ success |
+| List benchmarks (sanity check) | ✅ success |
+| Validate benchmarks | ✅ success |
+
+Steps executed in the `Wheel smoke test` job:
+
+| Step | Result |
+|------|--------|
+| Build and run the installed CLI outside the checkout (`./scripts/wheel_smoke_test.sh`) | ✅ success |
+
+Prior to this pass GitHub reported `total_count: 0` for workflow runs, zero
+status contexts and zero check runs, because the workflow targeted a `main`
+branch that does not exist.
+
 
 ---
 
