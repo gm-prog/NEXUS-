@@ -173,12 +173,14 @@ Phase 0's `TOOL_REGISTRY` validates fixture metadata; it does **not** provide ca
 - `inspect_queue`
 - `inspect_kafka_message`
 
-The previous draft's `search_runbooks` and `get_historical_incidents` are not registered in the Phase 0 tool registry. They remain future candidates only and must be specified, registered, side-effect-classified, and tested before any fixture or runtime use. No tool here is claimed to be implemented.
+The earlier roadmap's `search_runbooks` and `get_historical_incidents` entries are not registered in the Phase 0 tool registry. They remain future candidates only and must be specified, registered, side-effect-classified, and tested before any fixture or runtime use. No tool here is claimed to be implemented.
 
 **Deliverables:**
-- [ ] Controlled investigation workflow with validated tool schemas and fail-closed tool execution.
-- [ ] Evidence validation, structured hypotheses/diagnosis, uncertainty/abstention behavior, and replayable audit trail.
-- [ ] Budget enforcement (tokens, time, tool calls) and no hallucinated evidence IDs.
+- [ ] Investigation agent framework (single workflow) with validated tool schemas and fail-closed tool execution.
+- [ ] Structured hypothesis generation, explicit verification-step execution, and structured diagnosis output.
+- [ ] Evidence validation, uncertainty/abstention behavior, and no hallucinated evidence IDs.
+- [ ] Full, replayable audit trail using `AgentRun` and `ToolCall` records.
+- [ ] Budget enforcement (tokens, time, and tool calls).
 - [ ] **Evaluation-contract design checkpoint at Phase 4 entry.** Contract/scorer specification is a separate task requiring explicit authorization; this roadmap edit does not authorize Evaluation Contract v0.
 - [ ] After the contract is separately authorized and defined, a runner/scorer that emits records conforming to `evaluation-result.schema.json`.
 - [ ] Evaluate all current benchmark cases (22 at this baseline; inventory owned by [benchmarks/README.md](../../benchmarks/README.md)); retain result provenance and contract/evaluator version.
