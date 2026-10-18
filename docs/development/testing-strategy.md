@@ -131,9 +131,33 @@ NEXUS testing follows a layered approach aligned with the architecture:
 ### Benchmark Evaluation Tests (Core)
 - **Frozen Scenario Evaluation**: Each benchmark case is a frozen snapshot
 - **No Answer Leakage**: Evaluator loads ground truth separately, never passes to agent
-- **Structured Scoring**: Metrics defined in `evaluation-result.schema.json`
+- **Structured Scoring**: Result records must conform to `evaluation-result.schema.json`; the schema defines record format, not a scorer or metric semantics.
 - **Regression Detection**: Compare new run scores against baseline
 - **Human Review**: Prose quality assessed separately
+
+
+### Phase 1 Scenario Mapping (Proposed Design; Not Yet Reproduced)
+
+This table records proposed demo mapping, not executed faults. Preserve fixture IDs and causal roles. Any adaptation or extra demo instrumentation must be labelled.
+
+| Scenario | Fixture roles / IDs | Proposed demo components/dependencies | Planned signals/assertions | Known limitation |
+|---|---|---|---|---|
+| INC-001 | Fault site `svc-001-payment`; caller/impact `svc-002-checkout` | `checkout-service` → `payment-service`; deploy/commit event source | NPE log, failing payment trace, 0.1%→12% metric using the evidence record's five-minute window; deployment and earlier commit separately represented | `initial_symptoms` says two minutes while `ev-001-metric-error-rate` says five minutes. Preserve discrepancy; do not invent a second measurement. |
+| INC-002 | Primary/affected `svc-003-order`; inventory timeout is named in the chain but has no separate fixture `service_id` | `order-service`, bounded PostgreSQL pool, `inventory-service` timeout-source dependency | Inventory timeout trace, latency/pool metrics, connection leak, pool-exhaustion logs/503s, deployment and earlier commit | Mapping inventory as a timeout-source component is a demo adaptation; do not invent a fixture ID for it. |
+| INC-003 | Primary `svc-004-user`; affected `svc-005-auth` | Distinct `user-service` and `auth-service`, PostgreSQL, index-drop migration | Baseline/current DB measurements, slow-query logs/latency, deployment/migration and commit evidence | Keep user/auth roles distinct; database querying is a future candidate capability. |
+| INC-004 | Primary `svc-006-product`; affected infrastructure `svc-007-db-primary` (`postgresql-primary`) | `product-service`, Redis dependency, PostgreSQL primary | Cache-miss/DB-load metrics, dependency state, logs and trace | No local change/deployment trigger; Redis outage/partition/failover is the causal initiating event. |
+| INC-005 | Primary `svc-002-checkout`; external PayCo dependency | `checkout-service` → mocked PayCo directly; exclude `payment-service` from this fixture's causal path | PayCo degradation/dependency state, configured 10s client timeout, client span/log, success-rate change, config evidence | No local change/deployment trigger; external PayCo degradation is the causal initiating event. Mock latency is a simulation. |
+| INC-006 | Primary `svc-008-gateway`; downstream `svc-001-payment`, `svc-002-checkout`, `svc-003-order` | `api-gateway` plus payment/checkout/order roles | Config change 10000→100 at 2024-01-20 07:59Z; earlier commit evidence at 2024-01-19 15:00Z; gateway 5xx metric 0%→95%; rate-limit logs and separate 429/503 details | Fixture has no trace evidence. Any demo trace is supplemental instrumentation. |
+| INC-007 | Primary `svc-009-notification` | `notification-service`, memory-limited worker/container | Memory growth, OOM/restart logs, deployment/commit records, heap dump | `ev-006-heap-dump` is diagnostic evidence of retained WebSocket connections, not proof of recovery. |
+| INC-008 | Primary `svc-010-analytics` | Distinct `analytics-service` process/job | CPU saturation, recursion/stack diagnostic, logs/trace, deployment/commit | Keep analytics distinct so process/thread-dump localization is meaningful. |
+| INC-009 | Primary `svc-011-email` | Distinct `email-service`, queue backend and worker | Queue depth/backlog, stuck-job logs/metrics, deployment/commit | Email is distinct from notification; preserve separate service roles. |
+| INC-010 | Primary `svc-012-inventory`; affected `svc-003-order` | `inventory-service` Kafka consumer, Kafka dependency, affected order path | Consumer crash/lag and logs, poison-message details, deployment/commit | `ev-005-kafka-message` diagnoses a poison message; it does not prove recovery/DLQ handling. The fixture does not establish order-service as producer. |
+
+#### Planned tool candidates versus harness assertions
+
+The 11 fixture-required read-only names are proposed Phase 4 investigator-tool candidates: `get_trace`, `get_deployment`, `get_commit`, `query_metrics`, `query_database`, `get_config`, `get_dependency_status`, `query_logs`, `get_thread_dump`, `inspect_queue`, and `inspect_kafka_message`. Phase 0's `TOOL_REGISTRY` validates fixture metadata; it does not make an agent tool executable. These candidates need tool contracts, implementations, registration, policy enforcement, and tests before an agent can call them.
+
+Signal presence/absence, trigger/reset checks, event ordering, rate windows, OOM/restart observations, queue growth, 429/503 response mix, pool gauges, and evidence-integrity assertions belong to the demo/test harness, not agent capabilities. `search_runbooks` and `get_historical_incidents` are not registered in the Phase 0 registry and must not be described as available until explicitly registered and tested.
 
 ---
 
