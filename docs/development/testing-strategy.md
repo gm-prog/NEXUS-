@@ -289,7 +289,10 @@ current-lock/build-only and empty-cache fail-closed probes stay offline. The ins
 fixture manifest and all fixture bytes must match the checkout; its runtime
 closure is exported from the same lock and installed with required hashes,
 without a second dependency resolver. Local versus exact-head hosted evidence
-is recorded in [Phase 0 Status](phase-0-status.md) and PR #1.
+is recorded in [Phase 0 Status](phase-0-status.md), which distinguishes PR #1's
+original exact-head checks from the post-merge push run at the merge commit.
+Every later change — including documentation-only changes — needs its own
+checks verified at its exact PR head; do not assume inherited sign-off.
 
 ### Phase 1+ (Planned)
 ```yaml

@@ -1,32 +1,60 @@
 # NEXUS Phase 0 — Sign-Off Corrections
 
-Date: **2026-10-10**. Scope: Phase 0 only; **Phase 1 has not started**.
-[PR #1](https://github.com/gm-prog/NEXUS-/pull/1) remains the correction PR on
-`arena/eba8dba5-nexus`, targeting `master`. No merge, shared-history rewrite,
-repository setting or secret change is part of this work.
+Date: **2026-10-10** (original corrections; the starting-state descriptions in
+this document are historical observations from that period). Post-merge
+verification: **2026-10-18**. Scope: Phase 0 only; **Phase 1 has not started
+and requires separate authorization**. [PR #1](https://github.com/gm-prog/NEXUS-/pull/1)
+— the correction PR on `arena/eba8dba5-nexus` targeting `master` — was merged
+on **2026-10-18**; the merge commit is
+[`fad12054dccddde7d6a00e512767f58de1d95f24`](https://github.com/gm-prog/NEXUS-/commit/fad12054dccddde7d6a00e512767f58de1d95f24),
+verified at the time of this update. The correction work itself performed no
+merge, shared-history rewrite, repository-setting or secret change.
 
-## Current Final-Head Record
+## Sign-Off Record — Pre-Merge and Post-Merge
 
-**The current final SHA, hosted run URL, job conclusions and Phase 0 verdict
-are recorded in [PR #1's description](https://github.com/gm-prog/NEXUS-/pull/1),
-with [its current-head checks](https://github.com/gm-prog/NEXUS-/pull/1/checks).**
-That record is updated after the last push and exact-SHA verification. It is
-not an earlier code-head snapshot or an unfiltered "latest CI" result.
+### Pre-merge sign-off (historical; PR head `073fa21a…`)
+
+**The Phase 0 sign-off is the exact-final-head record in
+[PR #1's description](https://github.com/gm-prog/NEXUS-/pull/1), with its
+then-current-head checks.** It covers PR head
+`073fa21ad6252f64554be8ae60ca99d40033fda3`, validated by the `pull_request`
+[run 38059644430](https://github.com/gm-prog/NEXUS-/actions/runs/38059644430)
+against that exact head (all three required jobs successful). That record was
+assembled after the last push and exact-SHA verification; it is not an earlier
+code-head snapshot or an unfiltered "latest CI" result.
+
+### Post-merge verification (2026-10-18; merge commit `fad12054…`)
+
+PR #1 merged into `master` on 2026-10-18 as merge commit
+[`fad12054dccddde7d6a00e512767f58de1d95f24`](https://github.com/gm-prog/NEXUS-/commit/fad12054dccddde7d6a00e512767f58de1d95f24).
+The post-merge `push` workflow ran on `master` at that exact SHA —
+[run 39115811204](https://github.com/gm-prog/NEXUS-/actions/runs/39115811204),
+conclusion **success**:
+
+| Required job | Job ID | Result |
+|---|---|---|
+| [Validate (Python 3.11)](https://github.com/gm-prog/NEXUS-/actions/runs/39115811204/job/117641246173) | 117641246173 | success |
+| [Validate (Python 3.12)](https://github.com/gm-prog/NEXUS-/actions/runs/39115811204/job/117641246214) | 117641246214 | success |
+| [Wheel smoke test](https://github.com/gm-prog/NEXUS-/actions/runs/39115811204/job/117641246093) | 117641246093 | success |
+
+Each job completed successfully against the same merge SHA. The post-merge run
+does not retroactively turn the pre-merge run into post-merge evidence, and
+neither run validates any later documentation commit.
 
 This committed document cannot embed the SHA of the commit containing itself.
-The PR attestation deliberately lives outside that self-referential commit;
-read its full SHA/run alongside this document. Subsequent edits do not inherit
-sign-off: the final-head gate must be checked again, even for a docs-only push.
+The recorded merge SHA is a known baseline, not the future docs-PR head; the
+PR attestation deliberately lives outside that self-referential commit.
+Subsequent edits do not inherit sign-off: the final-head gate must be checked
+again at each change's exact PR head, even for a docs-only push.
 
-Read-only reproduction of that comparison:
+Read-only reproduction of run/job inspection for any candidate head:
 
 ```bash
-sha=$(git rev-parse HEAD)
-pr_sha=$(gh pr view 1 --repo gm-prog/NEXUS- --json headRefOid --jq '.headRefOid')
-test "$sha" = "$pr_sha"
-gh api "repos/gm-prog/NEXUS-/actions/runs?event=pull_request&head_sha=$sha" \
-  --jq '.workflow_runs[] | {id, head_sha, status, conclusion, html_url}'
-# For the matching completed run, inspect all three jobs and their steps:
+sha=$(git rev-parse HEAD)   # candidate PR head, or the merge SHA under review
+gh api "repos/gm-prog/NEXUS-/actions/runs?head_sha=$sha" \
+  --jq '.workflow_runs[] | {id, event, head_sha, status, conclusion, html_url}'
+# Select the run whose event/branch match the claim (pull_request vs push);
+# for the matching completed run, inspect all three jobs and their steps:
 gh api "repos/gm-prog/NEXUS-/actions/runs/RUN_ID/jobs" \
   --jq '.jobs[] | {name, conclusion, steps}'
 ```
@@ -36,6 +64,9 @@ Required hosted jobs: **Validate (Python 3.11)**, **Validate (Python 3.12)** and
 downloads are not claimed: run/job/step API results are the observed evidence.
 
 ## Starting State and Preservation
+
+The following starting-state paragraphs are historical observations from the
+2026-10-10 correction period.
 
 The local checkout initially had base HEAD
 `f1e8f941e174dd8082de774527fda788ae3119ae` plus restored modified/untracked
@@ -165,13 +196,34 @@ not inferred from local Python 3.11 success.
 
 ## Maintainer Actions / Verdict Boundary
 
-Read-only checks on 2026-10-10 still report `master` unprotected and private
-vulnerability reporting disabled. Enabling protection/private reporting or
-publishing a verified private contact requires a separate maintainer settings
-decision; nothing here changes those settings or merges/closes PR #1.
+**Historical observation (2026-10-10):** read-only checks at that time reported
+`master` unprotected and private vulnerability reporting disabled; enabling
+protection or publishing a verified private contact required a separate
+maintainer settings decision, and the correction work changed no settings and
+neither merged nor closed PR #1.
 
-The current **GO/NO-GO for Phase 0 sign-off** is the exact-final-head PR record,
+**Master protection, verified 2026-10-18:** `master` is covered by the active
+repository ruleset
+[`protect-master-pr-and-ci`](https://github.com/gm-prog/NEXUS-/rules/25337956)
+(ID 25337956), scoped to `refs/heads/master`:
+
+- required status checks under a strict up-to-date policy: **Validate
+  (Python 3.11)**, **Validate (Python 3.12)**, **Wheel smoke test**;
+- pull requests required (configured required approval count **0**); allowed
+  merge methods: merge, rebase, squash;
+- branch deletion and non-fast-forward pushes blocked; no bypass actors;
+- the conditional extra-approval rule for unattributed Copilot pull requests
+  (`require_extra_approval_for_unattributed_changes`) is enabled and was
+  intentionally accepted for the current scope; it does **not** mean ordinary
+  pull requests require one approval.
+
+Private vulnerability reporting and private security contact status are
+**unverified** as of this update; no claim is made about their current state,
+and no settings were changed by this documentation work.
+
+The **GO for Phase 0 sign-off** remains the exact-final-head PR record,
 conditioned on all three successful hosted jobs plus these scoped corrections
 and local gates. It is not benchmark diagnosis accuracy, runtime authorization,
-production readiness or permission to start Phase 1. **Phase 1 remains
-unstarted and requires a separate instruction.**
+production readiness or permission to start Phase 1. **Phase 0 is the only
+implemented phase; Phase 1 remains unstarted and requires a separate
+instruction.**

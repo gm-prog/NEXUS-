@@ -128,11 +128,12 @@ NEXUS does not claim to be an all-knowing autonomous SRE. The design favors expl
 For the commands that were actually executed and their results, see
 [Phase 0 Status](docs/development/phase-0-status.md).
 
-**Readiness:** Phase 0 correction is not permission to start Phase 1. The
-[status report](docs/development/phase-0-status.md) separates executed local
-checks from exact-head hosted evidence in PR #1 and records the reviewed
-INC-016/INC-019, leakage and lock corrections. No diagnosis-accuracy result is
-claimed. Phase 1 requires a separate instruction and has not started.
+**Readiness:** Phase 0 is the only implemented phase, and its correction is not
+permission to start Phase 1. The [status report](docs/development/phase-0-status.md)
+distinguishes PR #1's pre-merge exact-head sign-off (PR #1 is merged as of
+2026-10-18) from the post-merge push run at the merge commit, and records the
+reviewed INC-016/INC-019, leakage and lock corrections. No diagnosis-accuracy
+result is claimed. Phase 1 requires a separate instruction and has not started.
 
 ## Quick Start
 
