@@ -59,7 +59,7 @@ Before a future tool call executes, a runtime policy boundary must validate its 
 
 ### 2. Capability-Based, Not Role-Based
 
-A future run's capability set must reflect its authorized phase, incident policy, target environment, and required human approval. No capability is inferred from text or model output.
+A future run's capability set must reflect its authorized phase, incident-severity policy (for example, any broader read scope for SEV1 must be an explicit rule), tenant policy when multi-tenancy is introduced, target environment, and required human approval. These are explicit policy inputs, never implicit grants. No capability is inferred from text or model output.
 
 ### 3. Explicit Human Approval Gates
 
@@ -74,10 +74,10 @@ A successful sandbox test does not grant remote write permission automatically.
 
 | Action | Required audit fields |
 |---|---|
-| Tool call | `run_id`, tool, parameters, result hash, duration, allow/deny decision |
-| Capability grant | `run_id`, capability, grantor, reason, expiry |
-| Human approval | proposal ID, approver, decision, comments, timestamp |
-| Sandbox execution | attempt ID, command, exit code, artifacts, network attempts |
+| Tool call | `run_id`, `tool`, `parameters`, `result_hash`, `duration_ms`, `allowed` |
+| Capability grant | `run_id`, `capability`, `granted_by`, `reason`, `expires_at` |
+| Human approval | `proposal_id`, `approver`, `decision`, `comments`, `timestamp` |
+| Sandbox execution | `attempt_id`, `command`, `exit_code`, `artifacts`, `network_attempts` |
 | Remote provider operation | repository, branch/ref, operation, actor, approval reference, provider result, timestamp |
 
 ### 5. Least Privilege by Default

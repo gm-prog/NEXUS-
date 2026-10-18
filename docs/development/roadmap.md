@@ -56,6 +56,7 @@
 
 **Deliverables:**
 - [ ] Deterministic trigger/reset interface with health checks.
+- [ ] Fault-injection harness; the dedicated chaos-tool choice (e.g. Chaos Mesh versus a custom harness) remains open pending workload-based evidence.
 - [ ] OpenTelemetry traces, metrics, and logs appropriate to each scenario.
 - [ ] Local OTel Collector exporting to stdout/file only (**non-durable proof sink**).
 - [ ] Deployment/configuration-change observations where fixture records exist.
@@ -77,6 +78,9 @@ PostgreSQL, Redis, Kafka, queue backends, OOM/memory limits, and mock PayCo are 
 **Scenario scope:** all ten cases INC-001…INC-010 by the end of Phase 1B.
 
 **Additional deliverables:**
+- [ ] Telemetry prototype: single-node ClickHouse with OTel Collector and the ADR-0006 telemetry measurement battery.
+- [ ] Application-state prototype: single-node PostgreSQL with SQLAlchemy/Alembic and the ADR-0006 transaction/query/JSON measurement battery.
+- [ ] Record prototype measurements, load profile, commands, and limitations for the ADR-0006 follow-up decision; no production-final store is selected in Phase 1B.
 - [ ] Add service roles and only the infrastructure required by the scenario mapping.
 - [ ] Model Redis outage/failover, bounded PostgreSQL connection-pool/index changes, memory/OOM, analytics CPU/recursion, queue backlog, and Kafka consumer/poison-message behavior as applicable.
 - [ ] Extend traces/metrics/logs/config/deployment evidence to match each mapping's stated signals.
@@ -88,6 +92,7 @@ PostgreSQL, Redis, Kafka, queue backends, OOM/memory limits, and mock PayCo are 
 - [ ] The Collector exports telemetry to the non-durable stdout/file proof sink.
 - [ ] Evidence can be correlated manually for all ten scenarios; no AI investigator is required.
 - [ ] A clean checkout can start the stack with the documented local command.
+- [ ] The ADR-0006 prototype pair and planned measurement battery are complete and documented; results inform, but do not pre-decide, the Phase 2 storage decision.
 
 
 ## Phase 2 — Evidence Storage and Deterministic Correlation 📋 PLANNED
@@ -110,6 +115,11 @@ PostgreSQL, Redis, Kafka, queue backends, OOM/memory limits, and mock PayCo are 
 - **Phase 1B:** measurement prototypes—single-node ClickHouse + OTel Collector for telemetry, and single-node PostgreSQL + SQLAlchemy/Alembic for application state. Exercise ADR-0006's measurement battery. These are prototypes, not final production commitments.
 - **Phase 2:** operationalize the selected ingestion/storage/query/correlation path after reviewing measurements and updating the ADR.
 
+**Technology decisions retained for measurement/ADR review:**
+- Telemetry-store final choice remains open among ADR-0006's documented directions; ClickHouse is a Phase 1B prototype, not a production-final selection.
+- PostgreSQL remains the application-state direction recorded by ADR-0006, subject to the accepted measurement criteria.
+- Query interface (**SQL vs. custom API**) remains an explicit open decision until reviewed against the prototype and workload.
+
 **Exit criteria:**
 - [ ] Durable ingestion processes telemetry from all ten Phase 1 scenarios.
 - [ ] Deterministic queries return correct evidence bundles for all ten cases.
@@ -128,13 +138,18 @@ PostgreSQL, Redis, Kafka, queue backends, OOM/memory limits, and mock PayCo are 
 - [ ] Detection rules (threshold-based and rate-of-change; ML-free).
 - [ ] Incident candidate generation and grouping/deduplication.
 - [ ] Incident lifecycle state machine (DETECTED → TRIAGED → ...).
-- [ ] Web UI (React/TypeScript): incident timeline, service topology, evidence cards/source links, deployment comparison, and investigation journal.
+- [ ] Web UI (React/TypeScript):
+  - Incident timeline with correlated events
+  - Service topology graph
+  - Evidence cards with source links
+  - Deployment comparison view
+  - Investigation journal
 - [ ] API for UI consumption.
 
 **Exit criteria:**
 - [ ] Detection catches all ten Phase 1 scenarios as incident candidates.
 - [ ] UI shows correctly mapped timelines, topology, and evidence for each case.
-- [ ] Evidence links navigate to actual sources.
+- [ ] Evidence links navigate to source records (trace, log, commit, deployment) where those records exist.
 - [ ] Deployment comparison shows diffs for recorded trigger changes; externally initiated incidents remain representable without a local deployment.
 
 
