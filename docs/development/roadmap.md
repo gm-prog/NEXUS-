@@ -1,8 +1,10 @@
 # NEXUS Development Roadmap
 
 > **Status:** Phase 0 is the only implemented phase; Phase 1+ remain planned.
-> See [Phase 0 Status](phase-0-status.md) and PR #1's exact-head CI evidence for
-> scoped Phase 0 sign-off. Phase 1 requires separate authorization and is unstarted.
+> [PR #1](https://github.com/gm-prog/NEXUS-/pull/1) is merged (2026-10-18); the
+> merge SHA and the pre-merge/post-merge CI evidence are recorded in
+> [Phase 0 Status](phase-0-status.md). Phase 1 requires separate authorization
+> and is unstarted.
 
 ---
 
