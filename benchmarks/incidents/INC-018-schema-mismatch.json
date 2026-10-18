@@ -200,6 +200,10 @@
       "description": "Check order-service API schema for required fields",
       "tool": "get_api_schema",
       "expected_outcome": "CreateOrderRequest requires shipping_address_id",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
@@ -207,6 +211,10 @@
       "description": "Verify checkout-service request payload",
       "tool": "get_trace",
       "expected_outcome": "Request missing shipping_address_id",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
@@ -214,6 +222,10 @@
       "description": "Review contract test coverage",
       "tool": "get_contract_test",
       "expected_outcome": "Contract test missing required field validation",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     }
   ],

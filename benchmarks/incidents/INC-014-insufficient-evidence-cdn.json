@@ -151,6 +151,10 @@
       "description": "Check CDN provider status page",
       "tool": "get_dependency_status",
       "expected_outcome": "CloudFast shows major outage",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
@@ -158,6 +162,10 @@
       "description": "Confirm no deployments or config changes",
       "tool": "query_deployments",
       "expected_outcome": "No changes in 24h window",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
@@ -165,6 +173,10 @@
       "description": "Verify DNS resolves but connection fails",
       "tool": "network_diagnostic",
       "expected_outcome": "DNS OK, TCP timeout to CDN edges",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     }
   ],

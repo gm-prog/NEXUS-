@@ -1,11 +1,11 @@
 {
   "schema_version": "1.0.0",
   "case_id": "INC-019",
-  "title": "Database Lock Contention from Long-Running Analytics Query",
+  "title": "Analytics Transaction SHARE Lock Blocks Order Writes",
   "category": "db_lock_contention",
   "scenario_type": "single_cause",
   "difficulty": "medium",
-  "description": "An analytics team ran a long-running ad-hoc query (full table scan on orders) that held locks blocking all order-service writes. Order service shows deadlock errors and timeouts. The query was started manually, not via deployment.",
+  "description": "An analytics session submits BEGIN; LOCK TABLE orders IN SHARE MODE; SELECT * FROM orders WHERE created_at > '2024-02-01'; on the PostgreSQL writer primary and leaves the transaction open at the investigation cutoff. The synthetic pg_stat_activity and pg_locks snapshots identify its granted ShareLock and waiting order-service INSERT/UPDATE RowExclusiveLock requests with matching pg_blocking_pids. ShareLock conflicts with RowExclusiveLock; an ordinary SELECT's AccessShareLock alone does not. Order writes wait and encounter lock timeouts, not an evidenced deadlock cycle. This is a write-blocking analytics workflow design error, not proven CPU or connection exhaustion, and no deployment is attributed.",
   "environment": {
     "name": "production",
     "region": "us-east-1",
@@ -17,9 +17,9 @@
     "investigation_cutoff": "2024-02-02T15:10:00Z"
   },
   "initial_symptoms": [
-    "Order service: deadlock detected errors",
+    "Order-service INSERT/UPDATE operations report lock timeouts",
     "Order creation latency p99: 100ms → 30s",
-    "Database shows long-running query on orders table",
+    "PostgreSQL shows an active analytics transaction and order writers waiting on relation locks",
     "No deployment or code change"
   ],
   "affected_services": [
@@ -31,25 +31,25 @@
   ],
   "evidence_catalog": [
     {
-      "evidence_id": "ev-001-metric-deadlocks",
+      "evidence_id": "ev-001-metric-lock-timeouts",
       "evidence_type": "metric",
       "source": "telemetry_storage",
-      "source_reference": "query:db_deadlocks{service=order-service}[5m]",
+      "source_reference": "query:db_lock_timeouts{service=order-service}[5m]",
       "event_time": "2024-02-02T15:00:00Z",
       "collection_time": "2024-02-02T15:10:00Z",
       "time_window_start": "2024-02-02T15:00:00Z",
       "time_window_end": "2024-02-02T15:10:00Z",
       "service_id": "svc-003-order",
       "environment_id": "env-prod-us-east-1",
-      "summary": "Deadlock count spiked from 0 to 50/min at 15:00 UTC",
-      "query_reference": "SELECT deadlock_count FROM db_metrics WHERE service='order-service'",
+      "summary": "Lock-timeout count rose from 0 to 50/min at 15:00 UTC; order-creation latency p99 rose from 100ms to 30s",
+      "query_reference": "SELECT lock_timeout_count, order_creation_latency_p99_ms FROM db_metrics WHERE service='order-service'",
       "data_provenance": "direct_observation",
       "integrity_status": "verified",
       "availability_status": "available",
-      "synthetic_fixture_note": "Phase 1/2 will generate deadlock metrics"
+      "synthetic_fixture_note": "Synthetic lock-timeout and latency observations; no deadlock cycle or resource-exhaustion measurement is assumed"
     },
     {
-      "evidence_id": "ev-002-log-deadlock",
+      "evidence_id": "ev-002-log-lock-timeout",
       "evidence_type": "log",
       "source": "telemetry_storage",
       "source_reference": "order-service-logs",
@@ -57,12 +57,12 @@
       "collection_time": "2024-02-02T15:10:00Z",
       "service_id": "svc-003-order",
       "environment_id": "env-prod-us-east-1",
-      "summary": "Order service logs: 'Deadlock found when trying to get lock; try restarting transaction'",
-      "query_reference": "SELECT * FROM logs WHERE service='order-service' AND message LIKE '%Deadlock%'",
+      "summary": "Order-service INSERT/UPDATE orders attempts log PostgreSQL ERROR: canceling statement due to lock timeout (SQLSTATE 55P03)",
+      "query_reference": "SELECT * FROM logs WHERE service='order-service' AND message LIKE '%lock timeout%'",
       "data_provenance": "direct_observation",
       "integrity_status": "verified",
       "availability_status": "available",
-      "synthetic_fixture_note": "Phase 1/2 will generate deadlock error logs"
+      "synthetic_fixture_note": "Synthetic PostgreSQL lock-timeout error, not a MySQL deadlock message"
     },
     {
       "evidence_id": "ev-003-pg-stat-activity",
@@ -73,12 +73,12 @@
       "collection_time": "2024-02-02T15:10:00Z",
       "service_id": "svc-007-db-primary",
       "environment_id": "env-prod-us-east-1",
-      "summary": "pg_stat_activity shows long-running query: 'SELECT * FROM orders WHERE created_at > ...' running for 15min, holding locks",
-      "query_reference": "SELECT * FROM pg_stat_activity WHERE state='active' AND query LIKE '%FROM orders%'",
+      "summary": "pg_stat_activity: pid=4100 application_name=analytics-tool usename=analytics-engineer-1 state=active xact_start=2024-02-02T15:00:00Z; query batch: BEGIN; LOCK TABLE orders IN SHARE MODE; SELECT * FROM orders WHERE created_at > '2024-02-01'; the transaction remains open at 15:10 UTC without COMMIT or ROLLBACK",
+      "query_reference": "SELECT pid, application_name, usename, state, xact_start, query FROM pg_stat_activity WHERE pid=4100",
       "data_provenance": "direct_observation",
       "integrity_status": "verified",
       "availability_status": "available",
-      "synthetic_fixture_note": "Phase 1/2 will generate pg_stat_activity with long query"
+      "synthetic_fixture_note": "Explicit synthetic transaction/SQL evidence; pg_locks below independently confirms that the SHARE lock was acquired"
     },
     {
       "evidence_id": "ev-004-query-origin",
@@ -89,12 +89,12 @@
       "collection_time": "2024-02-02T15:10:00Z",
       "service_id": "svc-007-db-primary",
       "environment_id": "env-prod-us-east-1",
-      "summary": "Long-running query originated from analytics-tool (application_name), user 'analytics-engineer-1'",
-      "query_reference": "SELECT application_name, usename FROM pg_stat_activity WHERE pid=<long_query_pid>",
+      "summary": "Backend pid=4100 is the analytics-tool session owned by analytics-engineer-1 on the writer primary; it is not an order-service writer",
+      "query_reference": "SELECT pid, application_name, usename FROM pg_stat_activity WHERE pid=4100",
       "data_provenance": "direct_observation",
       "integrity_status": "verified",
       "availability_status": "available",
-      "synthetic_fixture_note": "Phase 1/2 will simulate query origin identification"
+      "synthetic_fixture_note": "Synthetic backend identity linked to the transaction and lock/wait snapshot"
     },
     {
       "evidence_id": "ev-005-no-deployments",
@@ -111,82 +111,98 @@
       "integrity_status": "verified",
       "availability_status": "available",
       "synthetic_fixture_note": "Phase 1/2 will create empty deployment list"
+    },
+    {
+      "evidence_id": "ev-006-lock-wait-snapshot",
+      "evidence_type": "verification_result",
+      "source": "telemetry_storage",
+      "source_reference": "postgres-pg_locks-and-pg_blocking_pids",
+      "event_time": "2024-02-02T15:10:00Z",
+      "collection_time": "2024-02-02T15:10:00Z",
+      "service_id": "svc-007-db-primary",
+      "environment_id": "env-prod-us-east-1",
+      "summary": "Relation public.orders: pid=4100 mode=ShareLock granted=true; pid=4100 mode=AccessShareLock granted=true for analytics SELECT; pid=4101 mode=RowExclusiveLock granted=false for order-service INSERT; pid=4102 mode=RowExclusiveLock granted=false for order-service UPDATE. pg_blocking_pids(4101)=[4100]; pg_blocking_pids(4102)=[4100]; both writers have wait_event_type=Lock. No wait cycle is present in this snapshot",
+      "query_reference": "SELECT l.pid, l.relation::regclass, l.mode, l.granted, a.application_name, a.wait_event_type, a.query, pg_blocking_pids(l.pid) FROM pg_locks l JOIN pg_stat_activity a USING (pid) WHERE l.locktype='relation' AND l.relation='public.orders'::regclass",
+      "data_provenance": "verification_result",
+      "integrity_status": "verified",
+      "availability_status": "available",
+      "synthetic_fixture_note": "Authored Phase 0 lock/wait evidence for an open explicit SHARE transaction; not captured from a live database"
     }
   ],
   "changes": [],
   "ground_truth": {
-    "root_cause_type": "resource_exhaustion",
+    "root_cause_type": "design_flaw",
     "primary_service_id": "svc-003-order",
     "trigger_change_id": "",
     "causal_chain": [
       {
         "from_type": "trigger",
-        "from_description": "Ad-hoc analytics query (full table scan on orders) started manually",
+        "from_description": "The manually submitted analytics workflow explicitly locks the orders relation inside an unended transaction on the writer primary",
         "to_type": "mechanism",
-        "to_description": "Query holds locks on orders table, blocking all writes; causes deadlocks on concurrent writes",
-        "evidence_ids": ["ev-003-pg-stat-activity", "ev-004-query-origin"],
-        "confidence": 1.0
+        "to_description": "Its acquired shared table lock remains transaction-scoped and excludes the row-exclusive table locks needed by concurrent data modifications",
+        "evidence_ids": ["ev-003-pg-stat-activity", "ev-004-query-origin", "ev-006-lock-wait-snapshot"],
+        "confidence": 0.95
       },
       {
         "from_type": "mechanism",
-        "from_description": "Order service writes block on locks, eventually deadlock",
+        "from_description": "The lock-manager snapshot links the waiting order writers directly to the analytics lock owner, without a dependency cycle",
         "to_type": "symptom",
-        "to_description": "Deadlock errors, write latency spikes to 30s",
-        "evidence_ids": ["ev-001-metric-deadlocks", "ev-002-log-deadlock"],
-        "confidence": 1.0
-      },
-      {
-        "from_type": "symptom",
-        "from_description": "Order creation fails with deadlock",
-        "to_type": "impact",
-        "to_description": "Orders cannot be placed; revenue impact",
-        "evidence_ids": ["ev-001-metric-deadlocks"],
-        "confidence": 1.0
+        "to_description": "Blocked order mutations incur lock-timeout errors and elevated creation latency; ordinary read access is not the blocking mechanism",
+        "evidence_ids": ["ev-001-metric-lock-timeouts", "ev-002-log-lock-timeout", "ev-006-lock-wait-snapshot"],
+        "confidence": 0.95
       }
     ],
     "ambiguity_note": "",
     "insufficient_evidence_note": "",
-    "contributing_factors": ["No query timeout for ad-hoc queries", "No read replica for analytics", "Analytics team has direct production DB access", "Missing lock monitoring/alerting"]
+    "contributing_factors": ["Analytics workflow takes a write-conflicting table lock on the writer primary", "The owning transaction remains open during analytics work"]
   },
   "expected_diagnosis": {
     "root_cause_type_match": true,
     "service_localization_match": true,
     "change_attribution_match": false,
-    "min_confidence": 0.95,
-    "must_include_evidence_ids": ["ev-001-metric-deadlocks", "ev-002-log-deadlock", "ev-003-pg-stat-activity", "ev-004-query-origin"],
-    "must_not_claim": ["Order service code caused deadlocks", "Deployment caused the issue"]
+    "min_confidence": 0.9,
+    "must_include_evidence_ids": ["ev-001-metric-lock-timeouts", "ev-002-log-lock-timeout", "ev-003-pg-stat-activity", "ev-004-query-origin", "ev-006-lock-wait-snapshot"],
+    "must_not_claim": ["A plain SELECT AccessShareLock conflicts with DML RowExclusiveLock", "A deadlock cycle was observed", "Order-service code or a deployment caused the contention", "CPU or connection-pool exhaustion was established", "Canceling only the SELECT necessarily ends the transaction or guarantees immediate recovery"]
   },
   "misleading_or_confounding_signals": [
-    "Deadlock errors appear in order-service (but caused by external query)",
-    "No recent deployment (but manual query caused it)"
+    "Timeouts surface in order-service but the lock owner is a separate analytics transaction",
+    "A long SELECT alone would not explain the write blockage; the acquired explicit table lock is decisive"
   ],
   "acceptable_alternatives": [],
   "required_checks": [
     {
       "check_id": "chk-001-pg-stat-activity",
-      "description": "Check pg_stat_activity for long-running queries",
+      "description": "Correlate pg_stat_activity transaction/SQL identity with pg_locks modes, granted flags and pg_blocking_pids for the order writers",
       "tool": "query_database",
-      "expected_outcome": "Long-running SELECT on orders table from analytics-tool",
+      "expected_outcome": "The analytics backend owns a granted SHARE table lock while INSERT/UPDATE backends wait for conflicting row-exclusive locks; the transaction is still open",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
-      "check_id": "chk-002-kill-query",
-      "description": "Kill long-running query and observe recovery",
+      "check_id": "chk-002-end-blocking-transaction",
+      "description": "REMEDIATION PROPOSAL only: with explicit human authorization and DBA/owner review, end the owning transaction safely or terminate the blocker backend if necessary. Canceling the running statement alone is not proof that its transaction-scoped locks are released; recheck transaction and lock state.",
       "tool": "execute_db_command",
-      "expected_outcome": "Deadlocks stop immediately after query killed",
-      "critical": true
+      "expected_outcome": "No remediation result is assumed. Verify transaction completion, lock release and writer progress, then reassess latency and retries; termination may roll back analytics work",
+      "execution_class": "human_approval_required",
+      "target_environment": "production",
+      "mutates_state": true,
+      "automated_execution_allowed": false,
+      "critical": false
     }
   ],
   "remediation_guidance": {
-    "suggestion": "Kill long-running query; revoke direct production DB access for analytics; provide read replica; add query timeout",
-    "risk_level": "low",
+    "suggestion": "Propose owner/DBA-approved completion or rollback of the blocking transaction, or approved backend termination if necessary; verify release and writer progress. Remove unnecessary explicit SHARE locking from analytics, prefer a read replica, and review transaction-lifetime controls.",
+    "risk_level": "medium",
     "test_plan": [
-      "Kill query in production",
-      "Verify order service recovers",
-      "Set up read replica for analytics",
-      "Revoke direct production access"
+      "Confirm blocker identity, transaction state and affected writers read-only",
+      "Obtain human authorization before ending the transaction or terminating its backend",
+      "Recheck lock release, writer progress, latency and retry behavior; no immediate recovery is guaranteed",
+      "Validate the revised analytics workflow in staging without a write-conflicting lock"
     ],
-    "rollback_plan": "Kill query (immediate recovery)"
+    "rollback_plan": "Ending a transaction or terminating its backend cannot be undone; account for rollback of uncommitted analytics work and coordinate any rerun with its owner. No automatic production action is authorized."
   },
-  "tags": ["db-lock-contention", "ad-hoc-query", "analytics", "deadlock", "order-service", "manual-action"]
+  "tags": ["db-lock-contention", "explicit-share-lock", "analytics", "lock-timeout", "order-service", "manual-action"]
 }

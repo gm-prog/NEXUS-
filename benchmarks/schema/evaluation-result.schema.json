@@ -5,6 +5,13 @@
   "description": "Contract for a completed evaluation run against a benchmark scenario.",
   "type": "object",
   "additionalProperties": false,
+  "$defs": {
+    "service_id": {
+      "type": "string",
+      "pattern": "^svc-[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "description": "Stable, human-readable service slug. Must match the identifier contract of incident-case.schema.json."
+    }
+  },
   "required": [
     "schema_version",
     "case_id",
@@ -78,10 +85,13 @@
       "additionalProperties": false,
       "required": ["identified_service_id", "correct", "confidence"],
       "properties": {
-        "identified_service_id": { "type": "string", "format": "uuid" },
+        "identified_service_id": { "$ref": "#/$defs/service_id" },
         "correct": { "type": "boolean" },
         "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
-        "alternative_services_considered": { "type": "array", "items": { "type": "string", "format": "uuid" } }
+        "alternative_services_considered": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/service_id" }
+        }
       }
     },
     "root_cause_result": {

@@ -168,6 +168,10 @@
       "description": "Verify PayCo status page / API health",
       "tool": "get_dependency_status",
       "expected_outcome": "PayCo shows degraded with 30s p99 latency",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
@@ -175,6 +179,10 @@
       "description": "Check checkout-service timeout configuration",
       "tool": "get_config",
       "expected_outcome": "Timeout set to 10s",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     },
     {
@@ -182,6 +190,10 @@
       "description": "Confirm trace shows external timeout not local error",
       "tool": "get_trace",
       "expected_outcome": "Span shows PayCo call duration 10s with timeout error",
+      "execution_class": "read_only",
+      "target_environment": "production",
+      "mutates_state": false,
+      "automated_execution_allowed": true,
       "critical": true
     }
   ],

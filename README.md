@@ -110,11 +110,14 @@ NEXUS does not claim to be an all-knowing autonomous SRE. The design favors expl
 |-----------|--------|
 | Architecture documentation | ✅ IMPLEMENTED |
 | Benchmark schemas (JSON Schema) | ✅ IMPLEMENTED |
-| 20+ incident scenario fixtures | ✅ IMPLEMENTED |
-| Validation CLI (`nexus-benchmark`) | ✅ IMPLEMENTED |
-| Automated tests (pytest) | ✅ IMPLEMENTED |
+| 22 incident scenario fixtures | ✅ IMPLEMENTED |
+| Validation CLI (`nexus-benchmark`) | ✅ IMPLEMENTED (installed console script) |
+| Agent-view / ground-truth separation | ✅ IMPLEMENTED (allowlisted projection + temporal cutoff, tested) |
+| Verification-step execution policy | ✅ IMPLEMENTED (`read_only` / `staging_experiment` / `human_approval_required`, registered-tool allowlist) |
+| Automated tests (pytest) | ✅ VERIFIED (383 local tests; dated local/hosted evidence in status report) |
 | Linting/formatting (Ruff) | ✅ IMPLEMENTED |
-| CI (GitHub Actions) | ✅ IMPLEMENTED |
+| CI (GitHub Actions) | ✅ IMPLEMENTED (triggers on `master`) |
+| Dependency lockfile | ✅ COMMITTED (`uv.lock`; strict runtime/dev/build installs and hash-checked wheel smoke) |
 | Telemetry ingestion pipeline | ❌ PLANNED (Phase 1+) |
 | AI investigation agent | ❌ PLANNED (Phase 4+) |
 | UI / Dashboard | ❌ PLANNED (Phase 3+) |
@@ -122,24 +125,34 @@ NEXUS does not claim to be an all-knowing autonomous SRE. The design favors expl
 | Remediation sandbox | ❌ PLANNED (Phase 7+) |
 | GitHub App integration | ❌ PLANNED (Phase 8+) |
 
+For the commands that were actually executed and their results, see
+[Phase 0 Status](docs/development/phase-0-status.md).
+
+**Readiness:** Phase 0 correction is not permission to start Phase 1. The
+[status report](docs/development/phase-0-status.md) separates executed local
+checks from exact-head hosted evidence in PR #1 and records the reviewed
+INC-016/INC-019, leakage and lock corrections. No diagnosis-accuracy result is
+claimed. Phase 1 requires a separate instruction and has not started.
+
 ## Quick Start
 
 ### Prerequisites
 
 - Python 3.11+
-- `pip` or `uv`
+- `uv` **0.13.0** on PATH, installed outside the project `.venv`
+- Bash (Windows: WSL2)
 
 ### Installation
 
 ```bash
 # Clone and enter repository
-git clone <repository-url>
-cd nexus
+git clone https://github.com/gm-prog/NEXUS-.git
+cd NEXUS-
 
-# Install with dev dependencies
-pip install -e ".[dev]"
-# Or with uv:
-# uv sync --dev
+# Enforce uv.lock, stage the locked build backend, then install editable
+# without build isolation. See CONTRIBUTING.md for pinned uv setup.
+./scripts/locked_sync.sh
+source .venv/bin/activate
 ```
 
 ### Validate Benchmarks
@@ -155,6 +168,14 @@ nexus-benchmark validate
 nexus-benchmark validate --case INC-001
 ```
 
+`validate` checks schema compliance (with `date-time`/`uuid` format checking
+enabled), cross-file composition, the ambiguity-coverage ratio, the execution
+metadata policy of every verification step, the temporal cutoff of every typed
+investigation timestamp, and a tested allowlist excluding evaluator-only fields
+(including `incident_window.end`). Future/malformed evidence is rejected, not
+filtered. Schema-invalid cases have dependent checks explicitly marked NOT RUN.
+This is fixture validation, not runtime authorization or AI diagnosis evaluation.
+
 ### Run Tests & Checks
 
 ```bash
@@ -167,6 +188,22 @@ pytest --cov=nexus_benchmarks
 # Lint and format check
 ruff check .
 ruff format --check .
+
+# Build a wheel, install it in a clean environment and run the CLI from a
+# directory outside the checkout
+./scripts/wheel_smoke_test.sh
+```
+
+### Command Contract
+
+`nexus-benchmark` is installed as a real console script
+(`nexus_benchmarks.cli:main`). The benchmark schemas and fixtures ship inside
+the wheel, so all three commands work from any directory:
+
+```bash
+nexus-benchmark --help
+nexus-benchmark list
+nexus-benchmark validate
 ```
 
 ## Documentation
@@ -188,8 +225,13 @@ ruff format --check .
 
 ## Non-Goals / Current Limitations
 
+- `uv.lock` pins dependency versions and artifact hashes, not the OS image or
+  Python patch release; this is not a byte-for-byte build or security guarantee
+- The answer-text scan detects verbatim copies, not semantic/paraphrased leaks;
+  two exact reviewed observation overlaps are documented in ADR-0014
 - No telemetry collection, processing, or storage
-- No AI model integration or agent framework
+- No AI model integration or agent framework; no benchmark diagnosis accuracy has
+  been measured. Passing validation establishes fixture/schema hygiene only
 - No UI, dashboard, or API server
 - No database (PostgreSQL, Redis, ClickHouse, etc.)
 - No message queue (Kafka, etc.)
@@ -201,4 +243,4 @@ ruff format --check .
 
 ## License
 
-MIT License — see [LICENSE](LICENSE) for details.
+MIT License — see [LICENSE](LICENSE).
