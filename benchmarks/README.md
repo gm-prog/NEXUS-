@@ -72,6 +72,8 @@ benchmarks/
 
 **Total: 22 cases** (5 of 22 = 22.7% ambiguous/insufficient_evidence)
 
+**Canonical inventory:** This file is the source of truth for current fixture count and case IDs. Evaluation over “all current cases” means this full inventory; fixture availability does not imply that an evaluation run or scored baseline exists.
+
 The validator enforces **at least 20% of the whole suite**, not a fixed count:
 `required_ambiguous_cases(total) = max(5, ceil(total * 0.20))`. Five ambiguous
 cases is 25% of a 20-case suite but only 8% of a 60-case one.
