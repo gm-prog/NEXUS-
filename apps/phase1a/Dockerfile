@@ -4,7 +4,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
     PYTHONPATH=/app/src \
-    PATH="/app/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+    PATH="/app/.venv/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 WORKDIR /app
 
 RUN addgroup --system --gid 10001 nexus && adduser --system --uid 10001 --ingroup nexus nexus
