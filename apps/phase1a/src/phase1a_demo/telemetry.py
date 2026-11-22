@@ -11,7 +11,7 @@ from typing import Any
 
 from opentelemetry import metrics, trace
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
-from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+from opentelemetry.sdk._logs.export import SimpleLogRecordProcessor
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
@@ -84,7 +84,7 @@ class Telemetry:
             self.meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
             self.logger_provider = LoggerProvider(resource=resource)
             self.logger_provider.add_log_record_processor(
-                BatchLogRecordProcessor(OTLPLogExporter(endpoint=endpoint, insecure=True))
+                SimpleLogRecordProcessor(OTLPLogExporter(endpoint=endpoint, insecure=True))
             )
             self.logger.addHandler(
                 LoggingHandler(level=logging.INFO, logger_provider=self.logger_provider)

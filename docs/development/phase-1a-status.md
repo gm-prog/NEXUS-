@@ -36,7 +36,7 @@ This is a factual implementation/verification report for the current revision. I
 | Docker Compose config/startup and Collector validation | NOT RUN | Docker/Compose absent. |
 | OTLP Collector receipt of traces, metrics and logs | NOT RUN | Requires Docker Compose; code/config alone is not telemetry receipt evidence. |
 | Loopback publication/backend port audit in running Compose | NOT RUN | Statically configured only; verify with local Docker. |
-| CI on exact PR head / required contexts | FAIL; fix applied, rerun pending | Runs `45058886225` and `45059071789` failed at `Run Phase 1A Compose integration smoke` in `Validate (Python 3.12)`; Python 3.11 and `Wheel smoke test` succeeded, and the always-cleanup step succeeded. The diagnostic annotation identified the build failure: `addgroup` was not found because the custom image `PATH` omitted `/usr/sbin` and `/sbin`. Dockerfile PATH now includes those system directories; exact-head rerun is pending. Do not treat hosted CI as green. |
+| CI on exact PR head / required contexts | FAIL; further telemetry fix applied, rerun pending | Run `45059463159` at head `ce5b15aec7b867114e7ea55c96613460145253fa`: Python 3.11 validation and wheel smoke passed; Python 3.12 unit/app checks passed but Compose smoke failed. The `addgroup` build failure from earlier run `45059199240` is resolved. Latest diagnostic found Collector stdout missing OTLP log records; replaced the batched OTLP log processor with a simple processor to flush records immediately. Exact-head CI rerun is pending. Do not treat hosted CI as green. |
 
 ## Local WSL/OpenCode handoff (required before calling Phase 1A complete)
 
