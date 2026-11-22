@@ -396,6 +396,8 @@ def test_batch_log_export_flushes_at_shutdown_and_shutdown_is_idempotent() -> No
         logical_latency_ms=30000,
         timeout_ms=10000,
     )
+    run(telemetry.flush_logs())
+    assert len(exporter.get_finished_logs()) == 1
     telemetry.shutdown()
     telemetry.shutdown()
     finished = exporter.get_finished_logs()

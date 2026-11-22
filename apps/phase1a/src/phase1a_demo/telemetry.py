@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -152,6 +153,12 @@ class Telemetry:
     def log(self, level: int, message: str, **attributes: Any) -> None:
         # Structured fields are represented in JSON and are bounded, non-sensitive metadata.
         self.logger.log(level, message, extra=attributes)
+
+    async def flush_logs(self) -> None:
+        """Flush queued logs without blocking the async service event loop."""
+        flushed = await asyncio.to_thread(self.logger_provider.force_flush, timeout_millis=2000)
+        if not flushed:
+            raise RuntimeError("OpenTelemetry log force-flush did not complete")
 
     def shutdown(self) -> None:
         """Flush queued telemetry once; repeated lifecycle shutdowns are harmless."""

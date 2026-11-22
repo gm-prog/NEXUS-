@@ -240,6 +240,7 @@ def create_app(
                         exception_type="ValueError",
                         billing_address_present=False,
                     )
+                    await app.state.telemetry.flush_logs()
                     return JSONResponse(
                         {"error": "payment_charge_failed", "service": service_name}, status_code=500
                     )
@@ -261,6 +262,7 @@ def create_app(
                     timeout_ms=10000,
                     wall_clock_sleep_ms=0,
                 )
+                await app.state.telemetry.flush_logs()
                 return JSONResponse(
                     {
                         "error": "external_dependency_timeout",
@@ -322,6 +324,7 @@ def create_app(
                             timeout_ms=10000,
                             wall_clock_sleep_ms=0,
                         )
+                        await app.state.telemetry.flush_logs()
                         record_fixture_rate(
                             app.state.telemetry, "INC-005", "payment_success_rate", 99.5
                         )
@@ -399,6 +402,7 @@ def create_app(
                     occurred_at="2024-01-15T09:55:00Z",
                     provenance="synthetic_fixture_observation_not_provider_data",
                 )
+                await app.state.telemetry.flush_logs()
                 return JSONResponse(
                     {
                         "case_id": case_id,
@@ -443,6 +447,7 @@ def create_app(
                 fixture_commit_time="2024-01-19T15:00:00Z",
                 provenance="synthetic_fixture_observation_not_provider_data",
             )
+            await app.state.telemetry.flush_logs()
             record_fixture_rate(app.state.telemetry, case_id, "gateway_5xx_rate", 0.0)
             record_fixture_rate(app.state.telemetry, case_id, "gateway_5xx_rate", 95.0)
             return JSONResponse(
