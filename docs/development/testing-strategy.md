@@ -109,7 +109,35 @@ NEXUS testing follows a layered approach aligned with the architecture:
 
 ---
 
-## Phase 1+ Testing (Planned)
+## Phase 1A Testing (Implemented; Compose/Collector verification pending)
+
+Phase 1A has an isolated `apps/phase1a` test environment and a black-box Compose smoke runner. The app's automated unit/contract tests use in-process ASGI service adapters to verify the real HTTP request contracts, W3C `traceparent` propagation, scenario calls, status outcomes, and resets. These tests do **not** prove independent-container startup or Collector receipt.
+
+Commands:
+
+```bash
+uv lock --project apps/phase1a --check
+uv sync --project apps/phase1a --locked --group dev
+apps/phase1a/.venv/bin/python -m pytest apps/phase1a/tests -v
+scripts/phase1a.sh validate
+scripts/phase1a.sh smoke
+scripts/phase1a.sh logs
+scripts/phase1a.sh down
+```
+
+The last four commands require Docker Compose. The smoke runner drives all four gateway routes, triggers and resets INC-001/005/006, repeats scenarios when requested, and checks Collector stdout for OTLP spans, metrics, logs and service identities. CI runs the Compose smoke on the Python 3.12 validation job and always runs cleanup afterward. The Phase 1A status report records whether that was actually observed for the current revision.
+
+| Case | Automated app assertions | Fixture-to-demo boundary |
+|---|---|---|
+| INC-001 | Gateway → checkout → payment; omitted/null billing address returns controlled payment-service HTTP 500; traceparent reaches downstream; reset restores healthy state. | 0.1% → 12% is a synthetic five-minute evidence-window metric; preserve the fixture's two-minute symptom wording discrepancy. Deployment and `abc123def456` observations are synthetic; Python exception semantics are not Java stack evidence. |
+| INC-005 | Healthy checkout; then checkout → payco-mock directly with logical 30,000 ms vs 10,000 ms timeout; test asserts payment-service is not called and reset works. | 99.5% → 12% is a synthetic metric separate from request-level timeouts. No local change record or real PayCo call; no real 30-second delay. |
+| INC-006 | Config 10,000 → 100; separate 95% 5xx measurement; actual gateway sample yields 503/429 distinctly; reset restores healthy routes. | The 100 request-unit/5,000 logical request model uses 95×503, 3×429, 2 forwarded as an explicit implementation assumption, not a fixture ratio. Traces are supplemental; the fixture has no trace evidence. |
+
+The Compose topology additionally checks five named processes (four applications plus mock) and the Collector, with only gateway host publication on loopback. This is a design/CI smoke contract, not a claim of successful local Docker execution. No Phase 1A harness assertion invokes future investigator tools. `required_checks` and `TOOL_REGISTRY` remain metadata, not callable tools.
+
+---
+
+## Phase 1B+ Testing (Planned)
 
 ### Unit Tests (Target: >90% coverage)
 - Deterministic intelligence functions (time-window alignment, deployment correlation, baselines)

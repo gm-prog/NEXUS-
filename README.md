@@ -1,4 +1,4 @@
-# NEXUS — Phase 0: Foundation and Benchmark
+# NEXUS — Foundation, Benchmark, and Phase 1A Demo
 
 > **NEXUS turns software telemetry and engineering change history into a reproducible, evidence-backed investigation, then eventually helps engineers validate a proposed fix in an isolated environment.**
 
@@ -6,7 +6,7 @@
 
 NEXUS is an AI-native engineering investigation platform designed to correlate runtime telemetry, service dependencies, source-code changes, and deployment history to produce evidence-backed incident investigations.
 
-**This repository contains Phase 0 only:** the greenfield foundation, architecture documentation, benchmark schemas, 20+ incident scenario fixtures, a deterministic validation CLI, automated tests, and CI. No telemetry ingestion, AI agents, UI, databases, or remediation systems are implemented.
+**The implemented repository scope is Phase 0 plus the local Phase 1A deterministic demo.** Phase 0 provides the foundation, benchmark schemas, 22 incident fixtures, validation CLI, tests and CI. Phase 1A adds a separately locked, synthetic local demo for INC-001, INC-005 and INC-006; it is not telemetry ingestion or a production platform. Phase 1B and later work remain planned; no AI investigator, UI, database, durable telemetry store, or remediation system is implemented.
 
 ## Problem & Intended Workflow
 
@@ -118,7 +118,8 @@ NEXUS does not claim to be an all-knowing autonomous SRE. The design favors expl
 | Linting/formatting (Ruff) | ✅ IMPLEMENTED |
 | CI (GitHub Actions) | ✅ IMPLEMENTED (triggers on `master`) |
 | Dependency lockfile | ✅ COMMITTED (`uv.lock`; strict runtime/dev/build installs and hash-checked wheel smoke) |
-| Telemetry ingestion pipeline | ❌ PLANNED (Phase 1+) |
+| Phase 1A local synthetic demo and non-durable OTLP proof sink | 🟡 IMPLEMENTED; Compose verification pending (see [Phase 1A app](apps/phase1a/README.md) and [status](docs/development/phase-1a-status.md)) |
+| Operational telemetry ingestion pipeline | ❌ PLANNED (Phase 2+) |
 | AI investigation agent | ❌ PLANNED (Phase 4+) |
 | UI / Dashboard | ❌ PLANNED (Phase 3+) |
 | Database integrations | ❌ PLANNED (Phase 2+) |
@@ -128,12 +129,7 @@ NEXUS does not claim to be an all-knowing autonomous SRE. The design favors expl
 For the commands that were actually executed and their results, see
 [Phase 0 Status](docs/development/phase-0-status.md).
 
-**Readiness:** Phase 0 is the only implemented phase, and its correction is not
-permission to start Phase 1. The [status report](docs/development/phase-0-status.md)
-distinguishes PR #1's pre-merge exact-head sign-off (PR #1 is merged as of
-2026-10-18) from the post-merge push run at the merge commit, and records the
-reviewed INC-016/INC-019, leakage and lock corrections. No diagnosis-accuracy
-result is claimed. Phase 1 requires a separate instruction and has not started.
+**Readiness:** Phase 0 remains the validated benchmark foundation. Phase 1A is a local deterministic demo, not the operational telemetry ingestion platform; Phase 1B and later phases remain planned. The historical [Phase 0 status report](docs/development/phase-0-status.md) remains unchanged. No diagnosis-accuracy result or production readiness is claimed. See the [Phase 1A status report](docs/development/phase-1a-status.md) for checks actually run and outstanding local Docker/Compose verification.
 
 ## Quick Start
 
@@ -195,6 +191,20 @@ ruff format --check .
 ./scripts/wheel_smoke_test.sh
 ```
 
+### Phase 1A Local Demo
+
+The separate synthetic demo project and Compose topology are documented in [apps/phase1a](apps/phase1a/README.md). With Docker Compose installed, use:
+
+```bash
+scripts/phase1a.sh validate
+scripts/phase1a.sh up
+scripts/phase1a.sh run all --repeat 2
+scripts/phase1a.sh logs
+scripts/phase1a.sh down
+```
+
+This local demo covers only INC-001, INC-005 and INC-006 and exports ephemeral OTLP proof to local Collector stdout. It does not change the Phase 0 benchmark CLI contract. See [Phase 1A Status](docs/development/phase-1a-status.md) for the exact verification state.
+
 ### Command Contract
 
 `nexus-benchmark` is installed as a real console script
@@ -223,6 +233,8 @@ nexus-benchmark validate
 - [Testing Strategy](docs/development/testing-strategy.md)
 - [Benchmark Details](benchmarks/README.md)
 - [Phase 0 Status](docs/development/phase-0-status.md)
+- [Phase 1A Demo](apps/phase1a/README.md)
+- [Phase 1A Status](docs/development/phase-1a-status.md)
 
 ## Non-Goals / Current Limitations
 
@@ -230,10 +242,11 @@ nexus-benchmark validate
   Python patch release; this is not a byte-for-byte build or security guarantee
 - The answer-text scan detects verbatim copies, not semantic/paraphrased leaks;
   two exact reviewed observation overlaps are documented in ADR-0014
-- No telemetry collection, processing, or storage
+- No operational or durable telemetry ingestion/storage; Phase 1A only has an
+  ephemeral local Collector proof sink
 - No AI model integration or agent framework; no benchmark diagnosis accuracy has
   been measured. Passing validation establishes fixture/schema hygiene only
-- No UI, dashboard, or API server
+- No UI or dashboard; Phase 1A's HTTP routes are synthetic demo service APIs only
 - No database (PostgreSQL, Redis, ClickHouse, etc.)
 - No message queue (Kafka, etc.)
 - No embeddings, RAG, or knowledge graph
