@@ -194,7 +194,11 @@ def main() -> int:
         print("Phase 1A smoke checks passed")
         return 0
     except (AssertionError, RuntimeError, OSError, ValueError) as error:
-        print(f"Phase 1A smoke check failed: {error}", file=sys.stderr)
+        message = f"Phase 1A smoke check failed: {error}"
+        print(message, file=sys.stderr)
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            annotation = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+            print(f"::error title=Phase 1A smoke failure::{annotation}", file=sys.stderr)
         return 1
 
 

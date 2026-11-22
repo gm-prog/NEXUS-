@@ -56,8 +56,21 @@ PY
         "${COMPOSE[@]}" logs --follow --no-color otel-collector
         ;;
     smoke)
-        "${COMPOSE[@]}" up --build --detach --wait --wait-timeout 180
-        python3 scripts/phase1a_smoke.py --scenario all --repeat 2 --verify-telemetry
+        if ! output=$("${COMPOSE[@]}" up --build --detach --wait --wait-timeout 180 2>&1); then
+            printf '%s\n' "$output" >&2
+            summary=$(printf '%s\n' "$output" | tail -n 8 | tr '\n' ';')
+            printf '::error title=Phase 1A Compose startup failed::%s\n' "$summary" >&2
+            "${COMPOSE[@]}" ps --all >&2 || true
+            "${COMPOSE[@]}" logs --no-color >&2 || true
+            exit 1
+        fi
+        printf '%s\n' "$output"
+        if ! python3 scripts/phase1a_smoke.py --scenario all --repeat 2 --verify-telemetry; then
+            printf '::error title=Phase 1A smoke failed::Check the smoke failure annotation and following Compose logs.\n' >&2
+            "${COMPOSE[@]}" ps --all >&2 || true
+            "${COMPOSE[@]}" logs --no-color >&2 || true
+            exit 1
+        fi
         ;;
     down)
         "${COMPOSE[@]}" down --remove-orphans --volumes

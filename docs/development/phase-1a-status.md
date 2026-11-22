@@ -36,7 +36,7 @@ This is a factual implementation/verification report for the current revision. I
 | Docker Compose config/startup and Collector validation | NOT RUN | Docker/Compose absent. |
 | OTLP Collector receipt of traces, metrics and logs | NOT RUN | Requires Docker Compose; code/config alone is not telemetry receipt evidence. |
 | Loopback publication/backend port audit in running Compose | NOT RUN | Statically configured only; verify with local Docker. |
-| CI on exact PR head / required contexts | NOT RUN at report authoring | CI must be checked after the single PR is opened and exact head is final. |
+| CI on exact PR head / required contexts | FAIL on initial run; diagnostics/rerun pending | Run `45058886225` at head `4325d45881b3968371a9a0e1c6b068c9ca6914e8`: `Validate (Python 3.11)` and `Wheel smoke test` succeeded; `Validate (Python 3.12)` failed only at `Run Phase 1A Compose integration smoke`, while the always-cleanup step succeeded. GitHub's hosted job log request returned EOF, so the underlying Compose/smoke failure is not yet identified. Added failure annotations and Compose service/log capture before retrying; do not treat hosted CI as green. |
 
 ## Local WSL/OpenCode handoff (required before calling Phase 1A complete)
 
