@@ -47,3 +47,10 @@ logs/
 
 # OS
 Thumbs.db
+# Phase 1A local-only environment and disposable telemetry/Compose output
+apps/phase1a/.venv/
+apps/phase1a/.env
+apps/phase1a/.env.*
+!apps/phase1a/.env.example
+apps/phase1a/telemetry-output/
+apps/phase1a/*.telemetry.jsonl

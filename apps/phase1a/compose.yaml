@@ -1,0 +1,144 @@
+name: nexus-phase1a
+
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.162.0
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    networks: [phase1a]
+    healthcheck:
+      test: ["CMD", "/otelcol-contrib", "validate", "--config=/etc/otelcol-contrib/config.yaml"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  payment-service:
+    build:
+      context: ../..
+      dockerfile: apps/phase1a/Dockerfile
+    image: nexus-phase1a-app:0.1.0
+    command: ["python", "-m", "phase1a_demo.server"]
+    environment:
+      NEXUS_SERVICE_NAME: payment-service
+      NEXUS_DEMO_MODE: "true"
+      NEXUS_DEMO_TOKEN: local-demo-only
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+    networks: [phase1a]
+    depends_on:
+      otel-collector:
+        condition: service_healthy
+    healthcheck: &app_health
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+
+  order-service:
+    build:
+      context: ../..
+      dockerfile: apps/phase1a/Dockerfile
+    image: nexus-phase1a-app:0.1.0
+    command: ["python", "-m", "phase1a_demo.server"]
+    environment:
+      NEXUS_SERVICE_NAME: order-service
+      NEXUS_DEMO_MODE: "true"
+      NEXUS_DEMO_TOKEN: local-demo-only
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+    networks: [phase1a]
+    depends_on:
+      otel-collector:
+        condition: service_healthy
+    healthcheck: *app_health
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+
+  payco-mock:
+    build:
+      context: ../..
+      dockerfile: apps/phase1a/Dockerfile
+    image: nexus-phase1a-app:0.1.0
+    command: ["python", "-m", "phase1a_demo.server"]
+    environment:
+      NEXUS_SERVICE_NAME: payco-mock
+      NEXUS_DEMO_MODE: "true"
+      NEXUS_DEMO_TOKEN: local-demo-only
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+    networks: [phase1a]
+    depends_on:
+      otel-collector:
+        condition: service_healthy
+    healthcheck: *app_health
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+
+  checkout-service:
+    build:
+      context: ../..
+      dockerfile: apps/phase1a/Dockerfile
+    image: nexus-phase1a-app:0.1.0
+    command: ["python", "-m", "phase1a_demo.server"]
+    environment:
+      NEXUS_SERVICE_NAME: checkout-service
+      NEXUS_DEMO_MODE: "true"
+      NEXUS_DEMO_TOKEN: local-demo-only
+      PAYMENT_URL: http://payment-service:8000
+      PAYCO_URL: http://payco-mock:8000
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+    networks: [phase1a]
+    depends_on:
+      otel-collector:
+        condition: service_healthy
+      payment-service:
+        condition: service_healthy
+      payco-mock:
+        condition: service_healthy
+    healthcheck: *app_health
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+
+  api-gateway:
+    build:
+      context: ../..
+      dockerfile: apps/phase1a/Dockerfile
+    image: nexus-phase1a-app:0.1.0
+    command: ["python", "-m", "phase1a_demo.server"]
+    environment:
+      NEXUS_SERVICE_NAME: api-gateway
+      NEXUS_DEMO_MODE: "true"
+      NEXUS_DEMO_TOKEN: local-demo-only
+      CHECKOUT_URL: http://checkout-service:8000
+      ORDER_URL: http://order-service:8000
+      PAYMENT_URL: http://payment-service:8000
+      PAYCO_URL: http://payco-mock:8000
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+    ports:
+      - "127.0.0.1:8000:8000"
+    networks: [phase1a]
+    depends_on:
+      otel-collector:
+        condition: service_healthy
+      checkout-service:
+        condition: service_healthy
+      order-service:
+        condition: service_healthy
+      payment-service:
+        condition: service_healthy
+      payco-mock:
+        condition: service_healthy
+    healthcheck: *app_health
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+
+networks:
+  phase1a:
+    driver: bridge

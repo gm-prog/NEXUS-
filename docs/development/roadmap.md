@@ -1,10 +1,6 @@
 # NEXUS Development Roadmap
 
-> **Status:** Phase 0 is the only implemented phase; Phase 1+ remain planned.
-> [PR #1](https://github.com/gm-prog/NEXUS-/pull/1) is merged (2026-10-18); the
-> merge SHA and the pre-merge/post-merge CI evidence are recorded in
-> [Phase 0 Status](phase-0-status.md). Phase 1 requires separate authorization
-> and is unstarted.
+> **Status:** Phase 0 is implemented. Phase 1A has a bounded local demo implementation; its verification state is recorded in [Phase 1A Status](phase-1a-status.md). Phase 1B and later phases remain planned. The historical [Phase 0 Status](phase-0-status.md) retains its original verification evidence.
 
 ---
 
@@ -38,7 +34,9 @@
 ---
 
 
-## Phase 1 — Reproducible Demo Application and Telemetry (Phases 1A/1B) 📋 PLANNED
+## Phase 1 — Reproducible Demo Application and Telemetry (Phases 1A/1B) 🟡 PARTIAL
+
+**Status note:** Phase 1A code and isolated app tests are implemented in this change. Full Compose/Collector behavior has not been verified in this sandbox because Docker is unavailable; see [Phase 1A Status](phase-1a-status.md). Do not call Phase 1A complete until every listed exit criterion is evidenced. Phase 1B remains planned.
 
 **Goal:** Build and instrument a deterministic local demo whose emitted evidence can be checked against the incident fixtures. Counts below refer to application services; mocks and infrastructure are counted separately.
 

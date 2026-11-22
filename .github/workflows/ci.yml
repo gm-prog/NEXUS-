@@ -44,7 +44,9 @@ jobs:
           version: "0.13.0"
           python-version: ${{ matrix.python-version }}
           enable-cache: true
-          cache-dependency-glob: uv.lock
+          cache-dependency-glob: |
+            uv.lock
+            apps/phase1a/uv.lock
 
       - name: Enforce lock and install dependencies without build isolation
         run: ./scripts/locked_sync.sh
@@ -72,6 +74,27 @@ jobs:
       - name: Validate benchmarks
         run: .venv/bin/nexus-benchmark validate
 
+      - name: Validate and test isolated Phase 1A app
+        run: |
+          uv lock --project apps/phase1a --check
+          uv sync --project apps/phase1a --locked --group dev
+          apps/phase1a/.venv/bin/python -m pytest apps/phase1a/tests -v
+
+      - name: Verify Compose integration environment
+        if: matrix.python-version == '3.12'
+        run: |
+          docker version
+          docker compose version
+          scripts/phase1a.sh validate
+
+      - name: Run Phase 1A Compose integration smoke
+        if: matrix.python-version == '3.12'
+        run: scripts/phase1a.sh smoke
+
+      - name: Always clean up Phase 1A Compose stack
+        if: always() && matrix.python-version == '3.12'
+        run: docker compose -f apps/phase1a/compose.yaml --project-directory apps/phase1a down --remove-orphans --volumes
+
   package:
     name: Wheel smoke test
     runs-on: ubuntu-latest
@@ -90,7 +113,9 @@ jobs:
           version: "0.13.0"
           python-version: "3.12"
           enable-cache: true
-          cache-dependency-glob: uv.lock
+          cache-dependency-glob: |
+            uv.lock
+            apps/phase1a/uv.lock
 
       # Builds without isolation, installs only hash-locked runtime wheels,
       # then installs the local wheel --no-deps --no-index in a fresh venv.

@@ -1,0 +1,37 @@
+[project]
+name = "nexus-phase1a-demo"
+version = "0.1.0"
+description = "Isolated deterministic NEXUS Phase 1A demo application"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi==0.121.0",
+    "httpx==0.28.1",
+    "opentelemetry-api==1.38.0",
+    "opentelemetry-exporter-otlp-proto-grpc==1.38.0",
+    "opentelemetry-sdk==1.38.0",
+    "uvicorn==0.38.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==8.4.2",
+]
+
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/phase1a_demo"]
+
+[tool.uv]
+required-version = "==0.13.0"
+exclude-newer = "2026-10-18T00:00:00Z"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
