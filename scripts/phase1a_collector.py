@@ -125,10 +125,21 @@ DEFAULT_POLLING = Polling()
 
 
 class CollectorEvidenceTimeout(AssertionError):
-    def __init__(self, timeout_seconds: float, missing: Mapping[str, list[str]]) -> None:
+    def __init__(
+        self,
+        timeout_seconds: float,
+        missing: Mapping[str, list[str]],
+        found: Mapping[str, set[str]],
+        block_counts: Mapping[str, int],
+    ) -> None:
+        observed = "; ".join(
+            f"{signal}={','.join(sorted(services)) or 'none'}" for signal, services in found.items()
+        )
+        counts = ", ".join(f"{signal}={count}" for signal, count in block_counts.items())
         super().__init__(
             f"Collector current-run evidence timed out after {timeout_seconds:g}s; "
-            f"missing signal/service pairs: {format_missing(missing)}"
+            f"missing signal/service pairs: {format_missing(missing)}; "
+            f"associated resources: {observed}; signal blocks: {counts}"
         )
 
 
@@ -142,6 +153,7 @@ def wait_for_collector_evidence(
     """Poll boundedly until all expected current-run signal/service pairs are received."""
     deadline = polling.monotonic() + polling.timeout_seconds
     found = {signal: set() for signal in expected}
+    output = ""
     while True:
         output = read_logs()
         found = parse_collector_evidence(output, since=since, expected=expected)
@@ -150,5 +162,11 @@ def wait_for_collector_evidence(
             return found
         remaining = deadline - polling.monotonic()
         if remaining <= 0:
-            raise CollectorEvidenceTimeout(polling.timeout_seconds, missing)
+            block_counts = {
+                signal: sum(
+                    1 for match in SIGNAL_HEADER.finditer(output) if match.group(1) == marker
+                )
+                for marker, signal in SIGNALS.items()
+            }
+            raise CollectorEvidenceTimeout(polling.timeout_seconds, missing, found, block_counts)
         polling.sleep(min(polling.poll_interval, remaining))

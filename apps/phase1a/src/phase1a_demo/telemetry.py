@@ -103,7 +103,13 @@ class Telemetry:
         if endpoint:
             self.logger_provider = LoggerProvider(resource=resource)
             self.logger_provider.add_log_record_processor(
-                BatchLogRecordProcessor(otlp_log_exporter)
+                BatchLogRecordProcessor(
+                    otlp_log_exporter,
+                    schedule_delay_millis=1000,
+                    max_export_batch_size=512,
+                    export_timeout_millis=5000,
+                    max_queue_size=2048,
+                )
             )
             self.logger.addHandler(
                 LoggingHandler(level=logging.INFO, logger_provider=self.logger_provider)
