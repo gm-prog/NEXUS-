@@ -137,7 +137,7 @@ def verify_topology() -> None:
 def verify_collector() -> None:
     deadline = time.monotonic() + 25
     output = ""
-    required = ["ResourceSpans", "ResourceMetrics", "ResourceLogs"]
+    required = ["ResourceSpans", "ResourceMetrics"]
     while time.monotonic() < deadline:
         result = subprocess.run(
             [*COMPOSE, "logs", "--no-color", "otel-collector"],
@@ -150,8 +150,11 @@ def verify_collector() -> None:
             break
         time.sleep(1)
     missing = [marker for marker in required if marker not in output]
+    if not any(marker in output for marker in ("ResourceLogs", "ResourceLog #", "LogRecord #")):
+        missing.append("OTLP log record block")
     if missing:
-        raise AssertionError(f"Collector did not show all OTLP signals; missing={missing}")
+        excerpt = output[-1200:].replace("\n", " ")
+        raise AssertionError(f"Collector signal output missing={missing}; tail={excerpt}")
     service_names = [
         "api-gateway",
         "checkout-service",
@@ -163,8 +166,8 @@ def verify_collector() -> None:
     if absent:
         raise AssertionError(f"Collector output missing service resources: {absent}")
     print(
-        "PASS Collector stdout contains OTLP ResourceSpans, ResourceMetrics, "
-        "ResourceLogs and service identities"
+        "PASS Collector stdout contains OTLP trace, metric and log records "
+        "for all service identities"
     )
 
 

@@ -75,7 +75,7 @@ scripts/phase1a.sh logs
 scripts/phase1a.sh down
 ```
 
-The smoke runner fails unless Collector stdout contains OTLP `ResourceSpans`, `ResourceMetrics`, and `ResourceLogs` plus all five service identities.
+The smoke runner fails unless Collector stdout contains trace spans, metric blocks, log records, and all five service identities.
 
 ## Reset and limitations
 

@@ -60,4 +60,4 @@ scripts/phase1a.sh logs
 scripts/phase1a.sh down
 ```
 
-Confirm the Compose smoke reports all five service identities and OTLP `ResourceSpans`, `ResourceMetrics`, and `ResourceLogs`; check container health and that only the gateway publishes to loopback; confirm no containers, networks, or generated telemetry remain after `down`. Report any mismatch before merge. Phase 1B, storage selection, diagnosis scoring, production readiness and all other incident cases remain out of scope.
+Confirm the Compose smoke reports all five service identities and actual OTLP trace, metric, and log records from Collector stdout; check container health and that only the gateway publishes to loopback; confirm no containers, networks, or generated telemetry remain after `down`. Report any mismatch before merge. Phase 1B, storage selection, diagnosis scoring, production readiness and all other incident cases remain out of scope.
