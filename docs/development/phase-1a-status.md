@@ -36,7 +36,7 @@ This is a factual implementation/verification report for the current revision. I
 | Docker Compose config/startup and Collector validation | NOT RUN | Docker/Compose absent. |
 | OTLP Collector receipt of traces, metrics and logs | NOT RUN | Requires Docker Compose; code/config alone is not telemetry receipt evidence. |
 | Loopback publication/backend port audit in running Compose | NOT RUN | Statically configured only; verify with local Docker. |
-| CI on exact PR head / required contexts | FAIL; further telemetry fix applied, rerun pending | Run `45059463159` at head `ce5b15aec7b867114e7ea55c96613460145253fa`: Python 3.11 validation and wheel smoke passed; Python 3.12 unit/app checks passed but Compose smoke failed. The `addgroup` build failure from earlier run `45059199240` is resolved. Latest diagnostic found Collector stdout missing OTLP log records; replaced the batched OTLP log processor with a simple processor to flush records immediately. Exact-head CI rerun is pending. Do not treat hosted CI as green. |
+| CI on exact PR head / required contexts | PASS on latest observed run; separate Collector receipt remains WSL follow-up | Run `45059712352` at head `f6234369b171be27d0f0d235e52b21b688b83d47`: Python 3.11 validation, Python 3.12 validation including Compose smoke, and wheel smoke all succeeded. The earlier runs found and fixed the image PATH issue and the missing OTLP log records; the latter now use a simple processor for immediate export. Compose smoke asserted actual Collector trace, metric, and log record output and all five service identities. Local Docker is unavailable, so independent WSL verification remains required. |
 
 ## Local WSL/OpenCode handoff (required before calling Phase 1A complete)
 
