@@ -15,7 +15,10 @@ import time
 import urllib.error
 import urllib.request
 from collections import Counter
+from datetime import UTC, datetime
 from typing import Any
+
+from phase1a_collector import wait_for_collector_evidence
 
 BASE_URL = os.environ.get("NEXUS_PHASE1A_URL", "http://127.0.0.1:8000")
 TOKEN = os.environ.get("NEXUS_DEMO_TOKEN", "local-demo-only")
@@ -94,14 +97,14 @@ def run_case(case_id: str) -> None:
         status, payload = request("/__demo__/trigger/INC-006", {}, control=True)
         assert status == 200 and payload["rate_limit_after"] == 100, payload
         status, modeled = request("/__demo__/simulate/inc-006", {}, control=True)
-        assert status == 200 and modeled["http_5xx_percent"] == 95.0, modeled
+        assert status == 200 and modeled["modeled_http_5xx_percent"] == 95.0, modeled
         statuses: Counter[int] = Counter()
         routes = ["checkout", "orders", "payments"]
         for index in range(100):
             status, _ = request(f"/api/v1/{routes[index % len(routes)]}", {})
             statuses[status] += 1
         assert statuses == Counter({503: 95, 429: 3, 200: 2}), dict(statuses)
-        print("PASS INC-006 gateway 5xx=95%; explicit test mix 95x503, 3x429, 2 forwarded")
+        print("PASS INC-006 95/3/2 synthetic model plus separate real HTTP decision sample")
     else:
         raise ValueError(f"unsupported case: {case_id}")
     reset()
@@ -134,40 +137,38 @@ def verify_topology() -> None:
     print("PASS healthy gateway routes reach checkout, order, and payment services")
 
 
-def verify_collector() -> None:
-    deadline = time.monotonic() + 25
-    output = ""
-    required = ["ResourceSpans", "ResourceMetrics"]
-    while time.monotonic() < deadline:
-        result = subprocess.run(
-            [*COMPOSE, "logs", "--no-color", "otel-collector"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        output = result.stdout + result.stderr
-        if all(marker in output for marker in required):
-            break
-        time.sleep(1)
-    missing = [marker for marker in required if marker not in output]
-    if not any(marker in output for marker in ("ResourceLogs", "ResourceLog #", "LogRecord #")):
-        missing.append("OTLP log record block")
-    if missing:
-        excerpt = output[-1200:].replace("\n", " ")
-        raise AssertionError(f"Collector signal output missing={missing}; tail={excerpt}")
-    service_names = [
-        "api-gateway",
-        "checkout-service",
-        "payment-service",
-        "order-service",
-        "payco-mock",
-    ]
-    absent = [name for name in service_names if name not in output]
-    if absent:
-        raise AssertionError(f"Collector output missing service resources: {absent}")
+def verify_collector(since: datetime) -> None:
+    since_value = since.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+    def read_current_run_logs() -> str:
+        try:
+            result = subprocess.run(
+                [
+                    *COMPOSE,
+                    "logs",
+                    "--no-color",
+                    "--timestamps",
+                    "--since",
+                    since_value,
+                    "otel-collector",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("Compose Collector log read exceeded its 5-second bound") from exc
+        if result.returncode:
+            raise RuntimeError(f"Compose Collector log read failed: {result.stderr[-1000:]}")
+        return result.stdout
+
+    found = wait_for_collector_evidence(read_current_run_logs, since=since)
+    for signal, services in found.items():
+        print(f"PASS Collector {signal}: {', '.join(sorted(services))}")
     print(
-        "PASS Collector stdout contains OTLP trace, metric and log records "
-        "for all service identities"
+        "PASS current-run Collector receipt matches required signal/service pairs; "
+        "order-service emits no scenario business log by design"
     )
 
 
@@ -183,6 +184,8 @@ def main() -> int:
         parser.error("--repeat must be between 1 and 5")
     try:
         wait_ready()
+        # Set the freshness cutoff immediately before topology/scenario smoke traffic.
+        smoke_started_at = datetime.now(UTC)
         if args.scenario == "all":
             verify_topology()
             scenarios = ["INC-001", "INC-005", "INC-006"]
@@ -193,7 +196,7 @@ def main() -> int:
             for case_id in scenarios:
                 run_case(case_id)
         if args.verify_telemetry:
-            verify_collector()
+            verify_collector(smoke_started_at)
         print("Phase 1A smoke checks passed")
         return 0
     except (AssertionError, RuntimeError, OSError, ValueError) as error:

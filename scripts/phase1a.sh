@@ -5,6 +5,27 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 COMPOSE=(docker compose -f apps/phase1a/compose.yaml --project-directory apps/phase1a)
 
+show_diagnostics() {
+    local description output status
+    for description in "Compose status" "Compose logs"; do
+        if [[ "$description" == "Compose status" ]]; then
+            if output=$("${COMPOSE[@]}" ps --all 2>&1); then
+                printf '%s\n' "$output" >&2
+            else
+                status=$?
+                printf '%s failed (exit %s):\n%s\n' "$description" "$status" "$output" >&2
+            fi
+        else
+            if output=$("${COMPOSE[@]}" logs --no-color 2>&1); then
+                printf '%s\n' "$output" >&2
+            else
+                status=$?
+                printf '%s failed (exit %s):\n%s\n' "$description" "$status" "$output" >&2
+            fi
+        fi
+    done
+}
+
 usage() {
     cat <<'EOF'
 Usage: scripts/phase1a.sh COMMAND [ARG]
@@ -60,15 +81,13 @@ PY
             printf '%s\n' "$output" >&2
             summary=$(printf '%s\n' "$output" | tail -n 8 | tr '\n' ';')
             printf '::error title=Phase 1A Compose startup failed::%s\n' "$summary" >&2
-            "${COMPOSE[@]}" ps --all >&2 || true
-            "${COMPOSE[@]}" logs --no-color >&2 || true
+            show_diagnostics
             exit 1
         fi
         printf '%s\n' "$output"
         if ! python3 scripts/phase1a_smoke.py --scenario all --repeat 2 --verify-telemetry; then
             printf '::error title=Phase 1A smoke failed::Check the smoke failure annotation and following Compose logs.\n' >&2
-            "${COMPOSE[@]}" ps --all >&2 || true
-            "${COMPOSE[@]}" logs --no-color >&2 || true
+            show_diagnostics
             exit 1
         fi
         ;;

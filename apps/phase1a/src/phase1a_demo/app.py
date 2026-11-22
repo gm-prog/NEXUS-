@@ -14,9 +14,16 @@ import httpx
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse
 from opentelemetry.propagate import extract, inject
+from opentelemetry.sdk._logs.export import LogExporter
+from opentelemetry.sdk.metrics.export import MetricReader
 from opentelemetry.trace import SpanKind, Status, StatusCode
 
-from phase1a_demo.telemetry import Telemetry, instrument_request, record_fixture_rate
+from phase1a_demo.telemetry import (
+    Telemetry,
+    instrument_request,
+    record_fixture_rate,
+    record_gateway_http_decision,
+)
 
 SERVICE_NAMES = {
     "api-gateway",
@@ -28,11 +35,17 @@ SERVICE_NAMES = {
 CONTROL_CASES = {"INC-001", "INC-005", "INC-006"}
 
 
+class ControlRejected(RuntimeError):
+    """A downstream service rejected a demo control request."""
+
+
 def create_app(
     service_name: str,
     *,
     http_client: httpx.AsyncClient | None = None,
     environ: Mapping[str, str] | None = None,
+    metric_reader: MetricReader | None = None,
+    log_exporter: LogExporter | None = None,
 ) -> FastAPI:
     """Create a service app. ``http_client`` is injectable for in-process contract tests."""
     if service_name not in SERVICE_NAMES:
@@ -54,7 +67,9 @@ def create_app(
     app.state.service_name = service_name
     app.state.demo_mode = env.get("NEXUS_DEMO_MODE", "false").lower() == "true"
     app.state.demo_token = env.get("NEXUS_DEMO_TOKEN", "local-demo-only")
-    app.state.telemetry = Telemetry(service_name)
+    app.state.telemetry = Telemetry(
+        service_name, metric_reader=metric_reader, log_exporter=log_exporter
+    )
     app.state.client = http_client
     app.state.owns_client = http_client is None
     app.state.faults = {"payment_null": False, "payco_degraded": False}
@@ -151,12 +166,40 @@ def create_app(
                 raise
 
     async def internal_control(destination: str, enabled_case: str | None) -> None:
-        await remote_request(
+        response = await remote_request(
             destination,
             "POST",
             "/__internal__/scenario",
             body={"case_id": enabled_case},
             control=True,
+        )
+        if not 200 <= response.status_code < 300:
+            raise ControlRejected(destination)
+
+    async def apply_controls(
+        destinations: list[str], enabled_case: str | None
+    ) -> tuple[list[str], list[str]]:
+        completed: list[str] = []
+        failed: list[str] = []
+        for destination in destinations:
+            try:
+                await internal_control(destination, enabled_case)
+            except (ControlRejected, httpx.HTTPError):
+                failed.append(destination)
+            else:
+                completed.append(destination)
+        return completed, failed
+
+    def control_failure(case_id: str, completed: list[str], failed: list[str]) -> JSONResponse:
+        return JSONResponse(
+            {
+                "error": "downstream_control_failed",
+                "case_id": case_id,
+                "completed_services": completed,
+                "failed_services": failed,
+                "partial": bool(completed),
+            },
+            status_code=502,
         )
 
     @app.get("/health/live")
@@ -241,15 +284,6 @@ def create_app(
                 app.state.telemetry.payments.add(
                     1, {"service.name": service_name, "outcome": "attempt"}
                 )
-                app.state.telemetry.fixture_measurements.record(
-                    30000,
-                    {
-                        "nexus.case_id": "INC-005",
-                        "nexus.measurement": "payco_logical_latency_ms",
-                        "nexus.provenance": "synthetic",
-                    },
-                )
-                app.state.telemetry.payco_timeouts.add(1, {"dependency": "payco-mock"})
                 with app.state.telemetry.tracer.start_as_current_span(
                     "checkout.payco_dependency"
                 ) as span:
@@ -261,6 +295,21 @@ def create_app(
                     )
                     if response.status_code == 504:
                         span.set_status(Status(StatusCode.ERROR, "logical external timeout"))
+                        app.state.telemetry.payco_timeouts.add(
+                            1,
+                            {
+                                "dependency": "payco-mock",
+                                "nexus.provenance": "observed_http_504",
+                            },
+                        )
+                        app.state.telemetry.logical_latency.record(
+                            30000,
+                            {
+                                "nexus.case_id": "INC-005",
+                                "nexus.provenance": "synthetic_virtual_observation",
+                                "nexus.timeout_ms": 10000,
+                            },
+                        )
                         app.state.telemetry.payments.add(
                             1, {"service.name": service_name, "outcome": "failure"}
                         )
@@ -335,7 +384,9 @@ def create_app(
             if case_id not in CONTROL_CASES:
                 return JSONResponse({"error": "unsupported_scenario"}, status_code=404)
             if case_id == "INC-001":
-                await internal_control("payment-service", case_id)
+                completed, failed = await apply_controls(["payment-service"], case_id)
+                if failed:
+                    return control_failure(case_id, completed, failed)
                 record_fixture_rate(app.state.telemetry, case_id, "payment_error_rate", 0.1)
                 record_fixture_rate(app.state.telemetry, case_id, "payment_error_rate", 12.0)
                 app.state.telemetry.log(
@@ -363,7 +414,9 @@ def create_app(
                     }
                 )
             if case_id == "INC-005":
-                await internal_control("payco-mock", case_id)
+                completed, failed = await apply_controls(["payco-mock"], case_id)
+                if failed:
+                    return control_failure(case_id, completed, failed)
                 return JSONResponse(
                     {
                         "case_id": case_id,
@@ -410,9 +463,10 @@ def create_app(
         async def reset(authorization: str | None = Header(default=None)) -> JSONResponse:
             if not authorized(authorization):
                 return JSONResponse({"error": "demo_control_not_authorized"}, status_code=403)
+            completed, failed = await apply_controls(["payment-service", "payco-mock"], None)
+            if failed:
+                return control_failure("reset", completed, failed)
             app.state.gateway.update(rate_limit=10000, scenario_index=0)
-            await internal_control("payment-service", None)
-            await internal_control("payco-mock", None)
             return JSONResponse({"reset": True, "rate_limit_per_minute": 10000})
 
         @app.post("/__demo__/simulate/inc-006")
@@ -434,25 +488,34 @@ def create_app(
                 else:
                     counts["forwarded"] += 1
             scaled = {key: value * 50 for key, value in counts.items()}
-            app.state.telemetry.rate_decisions.add(
-                counts["503"], {"http.response.status_code": 503}
-            )
-            app.state.telemetry.rate_decisions.add(
-                counts["429"], {"http.response.status_code": 429}
-            )
-            app.state.telemetry.rate_decisions.add(
-                counts["forwarded"], {"http.response.status_code": 200}
-            )
+            for status, count in (
+                (503, counts["503"]),
+                (429, counts["429"]),
+                (200, counts["forwarded"]),
+            ):
+                modeled_class = (
+                    "http_429" if status == 429 else "http_5xx" if status >= 500 else "forwarded"
+                )
+                app.state.telemetry.modeled_rate_decisions.add(
+                    count * 50,
+                    {
+                        "nexus.case_id": "INC-006",
+                        "nexus.decision_class": modeled_class,
+                        "nexus.provenance": "synthetic_harness_assumption",
+                        "http.response.status_code": status,
+                    },
+                )
             return JSONResponse(
                 {
-                    "actual_request_units": 100,
+                    "modeled_request_units": 100,
                     "logical_requests": 5000,
                     "logical_requests_per_minute": 5000,
-                    "scaled_status_counts": scaled,
-                    "http_5xx_percent": 95.0,
-                    "http_429_percent": 3.0,
-                    "forwarded_percent": 2.0,
+                    "modeled_scaled_status_counts": scaled,
+                    "modeled_http_5xx_percent": 95.0,
+                    "modeled_http_429_percent": 3.0,
+                    "modeled_forwarded_percent": 2.0,
                     "status_mix_is_fixture_fact": False,
+                    "telemetry_recorded": "synthetic_model_counts_only; no real requests counted",
                 }
             )
 
@@ -463,7 +526,7 @@ def create_app(
                 index = app.state.gateway["scenario_index"] % 100
                 app.state.gateway["scenario_index"] += 1
                 if index < 95:
-                    app.state.telemetry.rate_decisions.add(1, {"http.response.status_code": 503})
+                    record_gateway_http_decision(app.state.telemetry, 503)
                     app.state.telemetry.log(
                         logging.WARNING,
                         "gateway.rate_limit_exceeded",
@@ -475,7 +538,7 @@ def create_app(
                         {"error": "rate_limit_upstream_unavailable"}, status_code=503
                     )
                 if index < 98:
-                    app.state.telemetry.rate_decisions.add(1, {"http.response.status_code": 429})
+                    record_gateway_http_decision(app.state.telemetry, 429)
                     return JSONResponse({"error": "rate_limit_exceeded"}, status_code=429)
             scenario = request.headers.get("x-nexus-scenario")
             try:
@@ -485,9 +548,7 @@ def create_app(
             except httpx.HTTPError:
                 return JSONResponse({"error": "downstream_unavailable"}, status_code=503)
             if app.state.gateway["rate_limit"] == 100:
-                app.state.telemetry.rate_decisions.add(
-                    1, {"http.response.status_code": response.status_code}
-                )
+                record_gateway_http_decision(app.state.telemetry, response.status_code)
             return JSONResponse(response.json(), status_code=response.status_code)
 
         @app.post("/api/v1/checkout")

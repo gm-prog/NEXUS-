@@ -65,7 +65,7 @@ All scenario observations are marked synthetic. The demo does not query GitHub, 
 
 The services export OTLP gRPC to the pinned Collector on the private Compose network. The Collector enables traces, metrics, and logs pipelines and the `debug` exporter only. Its output is visible through `docker compose logs`; no remote exporter, file sink, database, or persistent volume is configured.
 
-Service resources include `service.name`, `service.version`, and `deployment.environment.name=nexus-local-demo`. Server middleware creates spans and bounded request-count/duration metrics. Explicit client spans inject W3C Trace Context on actual HTTP requests. Structured JSON logs carry `service.name` and active `trace_id`/`span_id`; request payloads are not logged. Scenario metrics are synthetic, bounded-label histogram observations; HTTP 429 and 5xx statuses are distinct.
+Service resources include `service.name`, `service.version`, and `deployment.environment.name=nexus-local-demo`. Server middleware creates spans and bounded request-count/duration metrics. Explicit client spans inject W3C Trace Context on actual HTTP requests. Structured JSON logs carry `service.name` and active `trace_id`/`span_id`; request payloads are not logged. Synthetic percentage observations remain in `nexus.fixture.synthetic.rate_percent` (unit `%`); INC-005 virtual latency uses the separate `nexus.demo.synthetic.logical_latency` histogram (unit `ms`) and is recorded only when PayCo mock returns 504. Its 30,000 ms sample is logical, not elapsed wall time, and no success-rate denominator is inferred. For INC-006, the 95/3/2 model distribution is recorded only in `nexus.demo.synthetic.gateway.modeled_request_decisions` with explicit synthetic provenance; real gateway decisions are separately counted by `nexus.gateway.http.rate_limit.decisions` only on actual HTTP proxy requests. 429 and 5xx classifications are separate.
 
 A complete proof run is:
 
@@ -75,7 +75,7 @@ scripts/phase1a.sh logs
 scripts/phase1a.sh down
 ```
 
-The smoke runner fails unless Collector stdout contains trace spans, metric blocks, log records, and all five service identities.
+Before any health/scenario traffic, the smoke runner captures a UTC cutoff and polls timestamped Collector output with Compose `logs --since`. It parses service resources inside each OTLP signal block and requires the explicit matrix: all five services for traces and metrics; `api-gateway`, `checkout-service`, `payment-service`, and `payco-mock` for logs. `order-service` intentionally emits no scenario business log. Missing, stale, or wrongly associated signal/service evidence fails the bounded poll.
 
 ## Reset and limitations
 

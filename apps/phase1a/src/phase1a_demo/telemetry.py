@@ -11,9 +11,9 @@ from typing import Any
 
 from opentelemetry import metrics, trace
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
-from opentelemetry.sdk._logs.export import SimpleLogRecordProcessor
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor, LogExporter
 from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.sdk.metrics.export import MetricReader, PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -51,8 +51,15 @@ class JsonFormatter(logging.Formatter):
 class Telemetry:
     """Per-process providers and instruments. Exporters are enabled by explicit config."""
 
-    def __init__(self, service_name: str) -> None:
+    def __init__(
+        self,
+        service_name: str,
+        *,
+        metric_reader: MetricReader | None = None,
+        log_exporter: LogExporter | None = None,
+    ) -> None:
         self.service_name = service_name
+        self._shutdown = False
         self.logger = logging.getLogger(service_name)
         self.logger.setLevel(logging.INFO)
         self.logger.propagate = False
@@ -82,19 +89,32 @@ class Telemetry:
                 OTLPMetricExporter(endpoint=endpoint, insecure=True), export_interval_millis=1000
             )
             self.meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
-            self.logger_provider = LoggerProvider(resource=resource)
-            self.logger_provider.add_log_record_processor(
-                SimpleLogRecordProcessor(OTLPLogExporter(endpoint=endpoint, insecure=True))
-            )
-            self.logger.addHandler(
-                LoggingHandler(level=logging.INFO, logger_provider=self.logger_provider)
-            )
+            otlp_log_exporter = OTLPLogExporter(endpoint=endpoint, insecure=True)
             trace.set_tracer_provider(self.tracer_provider)
             metrics.set_meter_provider(self.meter_provider)
         else:
             self.tracer_provider = TracerProvider(resource=resource)
-            self.meter_provider = MeterProvider(resource=resource)
+            self.meter_provider = MeterProvider(
+                resource=resource,
+                metric_readers=[metric_reader] if metric_reader is not None else [],
+            )
+            otlp_log_exporter = log_exporter
+
+        if endpoint:
             self.logger_provider = LoggerProvider(resource=resource)
+            self.logger_provider.add_log_record_processor(
+                BatchLogRecordProcessor(otlp_log_exporter)
+            )
+            self.logger.addHandler(
+                LoggingHandler(level=logging.INFO, logger_provider=self.logger_provider)
+            )
+        else:
+            self.logger_provider = LoggerProvider(resource=resource)
+            if log_exporter is not None:
+                self.logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
+                self.logger.addHandler(
+                    LoggingHandler(level=logging.INFO, logger_provider=self.logger_provider)
+                )
 
         self.tracer = self.tracer_provider.get_tracer("nexus.phase1a", "0.1.0")
         meter = self.meter_provider.get_meter("nexus.phase1a", "0.1.0")
@@ -104,11 +124,23 @@ class Telemetry:
         )
         self.payments = meter.create_counter("nexus.payment.attempts", unit="{attempt}")
         self.payco_timeouts = meter.create_counter("nexus.payco.logical_timeouts", unit="{call}")
-        self.rate_decisions = meter.create_counter(
-            "nexus.gateway.rate_limit.decisions", unit="{request}"
+        self.http_rate_decisions = meter.create_counter(
+            "nexus.gateway.http.rate_limit.decisions",
+            unit="{request}",
+            description="Operational decisions made for real gateway HTTP requests only",
+        )
+        self.modeled_rate_decisions = meter.create_counter(
+            "nexus.demo.synthetic.gateway.modeled_request_decisions",
+            unit="{request}",
+            description="Synthetic harness model counts, never observed HTTP requests",
         )
         self.fixture_measurements = meter.create_histogram(
             "nexus.fixture.synthetic.rate_percent", unit="%", description="Synthetic fixture rates"
+        )
+        self.logical_latency = meter.create_histogram(
+            "nexus.demo.synthetic.logical_latency",
+            unit="ms",
+            description="Synthetic virtual per-call latency observations, not wall-clock duration",
         )
 
     def log(self, level: int, message: str, **attributes: Any) -> None:
@@ -116,12 +148,33 @@ class Telemetry:
         self.logger.log(level, message, extra=attributes)
 
     def shutdown(self) -> None:
-        self.tracer_provider.force_flush(timeout_millis=2000)
-        self.meter_provider.force_flush(timeout_millis=2000)
-        self.logger_provider.force_flush(timeout_millis=2000)
-        self.tracer_provider.shutdown()
-        self.meter_provider.shutdown()
-        self.logger_provider.shutdown()
+        """Flush queued telemetry once; repeated lifecycle shutdowns are harmless."""
+        if self._shutdown:
+            return
+        self._shutdown = True
+        providers = (
+            ("traces", self.tracer_provider),
+            ("metrics", self.meter_provider),
+            ("logs", self.logger_provider),
+        )
+        failures: list[tuple[str, Exception | None]] = []
+        for signal, provider in providers:
+            try:
+                if not provider.force_flush(timeout_millis=2000):
+                    failures.append((signal, None))
+            except Exception as exc:  # noqa: BLE001 - still close all providers below
+                failures.append((signal, exc))
+        for signal, provider in providers:
+            try:
+                provider.shutdown()
+            except Exception as exc:  # noqa: BLE001 - finish closing the remaining providers
+                failures.append((signal, exc))
+        if failures:
+            failed_signals = sorted({signal for signal, _ in failures})
+            cause = next((error for _, error in failures if error is not None), None)
+            raise RuntimeError(
+                f"OpenTelemetry flush/shutdown failed for: {failed_signals}"
+            ) from cause
 
 
 def instrument_request(
@@ -134,6 +187,25 @@ def instrument_request(
     }
     telemetry.requests.add(1, attributes)
     telemetry.request_duration.record(elapsed_ms, attributes)
+
+
+def record_gateway_http_decision(telemetry: Telemetry, status_code: int) -> None:
+    """Record one real gateway request decision with explicit status classification."""
+    decision = (
+        "http_429"
+        if status_code == 429
+        else "http_5xx"
+        if 500 <= status_code <= 599
+        else "forwarded"
+    )
+    telemetry.http_rate_decisions.add(
+        1,
+        {
+            "http.response.status_code": status_code,
+            "nexus.decision_class": decision,
+            "nexus.provenance": "observed_http_request",
+        },
+    )
 
 
 def record_fixture_rate(telemetry: Telemetry, case_id: str, name: str, value: float) -> None:

@@ -1,63 +1,84 @@
 # Phase 1A Status — Local Deterministic Demo
 
-**Status: PARTIAL — LOCAL VERIFICATION REQUIRED.** The isolated app, tests, Compose topology, Collector configuration, and documentation are implemented. Python tests and a manual five-process HTTP run passed in Arena. Docker and Docker Compose are absent in this sandbox, so the Compose topology, Collector startup/configuration, OTLP receipt, loopback port publication, and container cleanup were not run or verified here. Do not treat this as Phase 1A complete or merge-ready until the Compose/Collector checks below pass in CI and local WSL.
+**Status: PARTIAL — hosted exact-head validation is pending, and local WSL verification has not run.** This report does not declare Phase 1A complete or merge-ready. The topology remains four application services (`api-gateway`, `checkout-service`, `order-service`, `payment-service`), the separate `payco-mock`, and one local Collector. Only INC-001, INC-005, and INC-006 are implemented. Phase 1B remains planned.
 
-This is a factual implementation/verification report for the current revision. It intentionally does not contain a future commit SHA.
+## Scope and fixture constraints
 
-## Baseline and scope
+- Root Phase 0 project and root `uv.lock` are unchanged. Demo dependencies remain isolated in `apps/phase1a/pyproject.toml` and `apps/phase1a/uv.lock`. ADR-0015 remains unchanged; ADR-0016 remains Proposed.
+- Only the gateway publishes `127.0.0.1:8000`; backend and mock ports are private. App containers run non-root, read-only with `/tmp` tmpfs and `no-new-privileges`. Collector output is ephemeral debug/stdout; there is no persistent volume or remote exporter.
+- INC-001 preserves the initial-symptom two-minute versus evidence five-minute discrepancy; the proposed metric uses five minutes only. The controlled Python `ValueError` is not represented as a Java `NullPointerException` or an invented source line. Change/commit references are synthetic, not provider lookups.
+- INC-005 calls `payco-mock` directly from checkout; payment-service is not in this causal path. The 30,000 ms value is virtual against the 10,000 ms timeout, with no sleep. The 99.5% → 12% synthetic percentage and per-call timeout evidence remain distinct; no denominator or local change is invented.
+- INC-006 retains the 10,000 → 100 requests/minute configuration change and the explicit 95×503 / 3×429 / 2×forwarded harness assumption. The model is not fixture-provided truth. The synthetic model and actual HTTP decisions now use separate instruments and provenance. 429 is not 5xx. Synthetic config time `2024-01-20T07:59:00Z` remains distinct from fixture commit evidence `2024-01-19T15:00:00Z`; fixture trace evidence is absent and app traces are supplemental.
 
-- Repository: `gm-prog/NEXUS-`; default branch `master`.
-- Fresh `git fetch origin master` observed live master unchanged at `8519af2d76ad3825011361310a4356c9d179141c` (the prompt's expected baseline). No open PRs were present at preflight.
-- Arena's session branch is fixed as `arena/5b30c202-nexus`; it was fast-forwarded from `827b11739792698a2016b909080014d8420b3cff` to the verified master SHA before edits. No branch switch or newly named feature branch was used.
-- The root Phase 0 project and `uv.lock` were not changed. App dependencies are isolated in `apps/phase1a/pyproject.toml` and `apps/phase1a/uv.lock`; resolution is bounded to artifacts uploaded before `2026-10-18T00:00:00Z`.
-- Only INC-001, INC-005 and INC-006 are implemented. Benchmark fixtures, schemas, `TOOL_REGISTRY`, ADR-0001–ADR-0015, ADR-0004, and ADR-0006 are unchanged. ADR-0016 is a new **Proposed** architecture record.
+## Remediation implementation and regression coverage
 
-## Implemented topology and scenario behavior
+- INC-006 model counts use `nexus.demo.synthetic.gateway.modeled_request_decisions` (`{request}`, `synthetic_harness_assumption`); actual HTTP decisions use `nexus.gateway.http.rate_limit.decisions` (`{request}`, `observed_http_request`) only on gateway proxy traffic. The simulation response labels all modeled values and explicitly says it records no real requests.
+- Status classification is explicit: `429` → `http_429`, 500–599 → `http_5xx`, otherwise → `forwarded`. In-memory metric-reader tests verify values, units, labels, scenario-only vs HTTP-only increments, and separation of the old mixed-counter failure mode.
+- INC-005 virtual latency uses `nexus.demo.synthetic.logical_latency` (`ms`), emitted only for a PayCo mock 504; success-rate values remain in the `%` histogram. `nexus.payco.logical_timeouts` increments once per observed 504 and not for success. Tests cover a healthy call and repeated timed-out calls without wall-clock delay.
+- Trigger/reset control calls now inspect all downstream responses. Rejected or unreachable services return HTTP 502 with completed/failed service names and partial status; response bodies, request data and tokens are not returned. Success response contracts are covered.
+- Logs use `BatchLogRecordProcessor`; shutdown force-flushes and closes all providers, reports flush/shutdown failures rather than silently ignoring them, and is idempotent. An in-memory exporter regression test verifies structured attributes and service identity after shutdown.
+- Collector proof captures a UTC cutoff before smoke traffic, calls Compose logs with `--since` and timestamps, parses `service.name` only within signal resource blocks, and waits boundedly for an explicit service-by-signal matrix. Traces and metrics require all five services; logs require `api-gateway`, `checkout-service`, `payment-service`, and `payco-mock`. `order-service` emits no scenario business log by design. Tests reject stale-only output, absent log/service pairs, wrong-signal identities, and broad marker/name matches without resource associations.
 
-- Shared Python/FastAPI package launched as independent processes/containers for `api-gateway`, `checkout-service`, `order-service`, `payment-service`, and `payco-mock`; the mock is not an application service. Docker Compose publishes only gateway `127.0.0.1:8000`; backend and mock ports are private. All app endpoints have live/ready health routes and Compose health checks. The Collector image is explicitly version-pinned and configured for OTLP traces, metrics and logs with `debug` stdout exporter only.
-- Gateway/checkout/payment paths use real HTTP requests and W3C `traceparent` propagation. JSON logs are correlated when a real exporter-enabled service process is running; bounded HTTP, payment, PayCo, rate-decision, and synthetic fixture measurements are defined. No request body, billing address, payment identifier, or secret is logged.
-- INC-001: gateway → checkout → payment; controlled Python `ValueError` returns payment HTTP 500 when the scenario is triggered and billing address is absent. Metric sample is explicitly synthetic and uses the five-minute evidence window. The two-minute `initial_symptoms` wording discrepancy remains stated; no second measurement is invented. Deployment/commit evidence is a synthetic observation only.
-- INC-005: checkout → payco-mock directly; payment-service is not called. Degraded mock returns a virtual 30,000 ms latency against the 10,000 ms timeout with no wall-clock sleep. The 99.5% → 12% success metric is synthetic; no unsupported denominator or local change record is added.
-- INC-006: gateway config model changes from 10,000 to 100 requests/minute. A 100-unit sample represents 5,000 logical requests/minute at 50 requests/unit. The model's 95×503, 3×429 and 2 forwarded outcomes are labeled a deterministic implementation assumption, not fixture truth; 429 is separate from the 95% 5xx metric. Synthetic config time `2024-01-20T07:59:00Z` and fixture commit reference/time `stu901vwx234` / `2024-01-19T15:00:00Z` are separate observations. Generated traces are supplemental because the fixture has no trace evidence.
+## Image pin review
 
-## Commands and observed results
+- Python is pinned to `python:3.12.15-slim-bookworm`. CPython’s official `v3.12.15` tag was dated 2026-09-30. The official Docker Library `python` metadata at commit [`2fde087`](https://github.com/docker-library/official-images/commit/2fde087b614c3bfc43eb55eb41133371fcb6260d) records `3.12.15-slim-bookworm` and lists multiple architectures. Compared with the previous 3.12.12 base, upstream CPython changes include security fixes such as CVE-2026-2297, CVE-2026-3644, CVE-2026-4224 and CVE-2026-12003 (see [the official tag comparison](https://github.com/python/cpython/compare/v3.12.12...v3.12.15)). The exact patch tag is retained rather than floating `3.12`/`latest`.
+- Collector is pinned to `otel/opentelemetry-collector-contrib:0.163.0`, the official release tagged 2026-10-14 ([core release notes](https://github.com/open-telemetry/opentelemetry-collector/releases/tag/v0.163.0), [contrib release notes](https://github.com/open-telemetry/opentelemetry-collector-contrib/releases/tag/v0.163.0)). The reviewed breaking changes concern unrelated components; the enabled OTLP receiver, batch processor, debug exporter and health-check extension configuration is unchanged. The isolated OTLP SDK/exporter packages remain pinned at 1.38.0; no dependency lock changes were needed.
+- Exact version tags are used, not floating tags. Registry manifest digests were not independently available through the allowed GitHub metadata access, and no image scanner or Docker daemon is available in Arena. GitHub repository advisory endpoints returned 404; this is **not** a claim that either image has no CVEs. The required real image pull/build/start and Compose smoke are delegated to the new hosted Compose CI run; its result is recorded below after completion.
 
-| Check | Result | Evidence / limitation |
+## Validation evidence and provenance
+
+These categories prove different things: unit/contract tests prove local code behavior, not real multi-container behavior; hosted Compose CI proves runtime behavior on its runner, not on Samrat’s machine; only the OpenCode WSL run establishes behavior in the user’s local Docker environment.
+
+| Check | Result | Evidence / limit |
 |---|---|---|
-| Python / sandbox capability | PASS preflight | Python `3.11.2`; `uv` was initially not on PATH; Docker and Docker Compose commands returned `command not found`. No privileged install or remote Docker workaround attempted. |
-| Root locked install | PASS on rerun | Installed pinned `uv==0.13.0` in a temporary tooling prefix outside the repo and ran `PATH=/tmp/nexus-uv-tooling/local/bin:$PATH ./scripts/locked_sync.sh`; no root lock changes. |
-| Root Ruff formatting/lint | PASS | `./.venv/bin/ruff format --check .` and `./.venv/bin/ruff check .`. |
-| Root test suite | PASS on rerun | `./.venv/bin/python -m pytest -v`: 383 passed. The initial attempt without `uv` on PATH had 377 passed and 6 setup errors in lock tests; after putting the pinned tooling binary on PATH, the full suite passed. |
-| Phase 0 CLI/fixture validation | PASS | `.venv/bin/nexus-benchmark --help`, `list`, `validate`; all 22 cases valid, composition/policy/temporal/agent-view checks passed. |
-| Root wheel smoke | PASS | `./scripts/wheel_smoke_test.sh`; locked root install, wheel/sdist build, all 22 packaged fixture bytes verified, installed CLI `help/list/validate` succeeded. |
-| App lock and app tests | PASS | `uv lock --project apps/phase1a --check`, `uv sync --project apps/phase1a --locked --group dev`, `apps/phase1a/.venv/bin/python -m pytest apps/phase1a/tests -v`: 4 passed on Python 3.11.2. Python 3.12 was unavailable locally. |
-| Independent-process HTTP scenario smoke | PASS (no Docker/Collector) | Started five independent Uvicorn service processes on loopback ports 8000 and 8101–8104, then ran `python scripts/phase1a_smoke.py --scenario all --repeat 2`: all three cases passed twice, including INC-005 direct-path and INC-006 status mix. All five processes were stopped; ports were confirmed closed. No OTLP endpoint was configured for this run. |
-| YAML syntax parse | PASS, limited | PyYAML parsed Compose, Collector, and CI YAML. This is not equivalent to `docker compose config`. |
-| Docker Compose config/startup and Collector validation | NOT RUN | Docker/Compose absent. |
-| OTLP Collector receipt of traces, metrics and logs | NOT RUN | Requires Docker Compose; code/config alone is not telemetry receipt evidence. |
-| Loopback publication/backend port audit in running Compose | NOT RUN | Statically configured only; verify with local Docker. |
-| CI on exact PR head / required contexts | PASS on latest observed run; separate Collector receipt remains WSL follow-up | Run `45059712352` at head `f6234369b171be27d0f0d235e52b21b688b83d47`: Python 3.11 validation, Python 3.12 validation including Compose smoke, and wheel smoke all succeeded. The earlier runs found and fixed the image PATH issue and the missing OTLP log records; the latter now use a simple processor for immediate export. Compose smoke asserted actual Collector trace, metric, and log record output and all five service identities. Local Docker is unavailable, so independent WSL verification remains required. |
+| Root lock and dependency sync | PASS | `uv lock --check`; `./scripts/locked_sync.sh` with pinned `uv==0.13.0`. Root `uv.lock` unchanged. |
+| Root formatting and lint | PASS | `.venv/bin/ruff format --check .`; `.venv/bin/ruff check .`. |
+| Root tests | PASS | `.venv/bin/python -m pytest -v`: 390 passed, including Collector transcript/parser regressions. |
+| Phase 0 fixture validation | PASS | `.venv/bin/nexus-benchmark validate`: all 22 cases valid; composition, execution-policy, temporal-integrity and agent-view checks passed. |
+| Root wheel smoke | PASS | `./scripts/wheel_smoke_test.sh`: packaged all 22 fixture bytes and installed CLI help/list/validate succeeded outside the checkout. |
+| Isolated app lock/sync/tests | PASS | `uv lock --project apps/phase1a --check`; `uv sync --project apps/phase1a --locked --group dev`; app tests: 8 passed on Python 3.11.2. |
+| Five-process HTTP smoke without Docker/OTLP | PASS, limited | Ran all three scenarios twice through five independent local service processes; all assertions passed and all service ports were closed after termination. This does not establish Compose or Collector receipt. |
+| Docker/Compose in Arena | NOT RUN — unavailable | `docker` is not installed (`command not found`); `docker version`, `docker compose version`, `scripts/phase1a.sh validate`, and Arena-local `scripts/phase1a.sh smoke` cannot be run here. |
+| WSL/Docker on Samrat’s machine | PENDING / NOT RUN | Must be performed by OpenCode in a clean worktree at the exact PR SHA; see handoff below. |
 
-## Local WSL/OpenCode handoff (required before calling Phase 1A complete)
+### CI run-to-commit record
 
-From a clean checkout of the PR head, first confirm status/branch/head and inspect the diff. With Python 3.11/3.12, `uv==0.13.0`, Docker Engine and Compose v2 installed, run:
+Run IDs and full tested SHAs were checked directly against GitHub Actions metadata. Runs before remediation are baselines, not proof that remediation changes passed.
+
+- **Pre-remediation:** [run 45059712352](https://github.com/gm-prog/NEXUS-/actions/runs/45059712352), tested only `f6234369b171be27d0f0d235e52b21b688b83d47`, conclusion **success** (Python 3.11, Python 3.12 including Compose smoke, and wheel smoke).
+- **Exact starting-head baseline:** [run 45059855211](https://github.com/gm-prog/NEXUS-/actions/runs/45059855211), tested `6b4fe6ca9350ec7b683c3b033eb8688fe0c6e84d`, conclusion **success** (Python 3.11, Python 3.12 including Compose smoke, and wheel smoke). This was the remediation starting point, not a remediation run.
+- **Post-remediation exact head:** PENDING. After pushing the code changes, record the full SHA, new Actions run ID/link, conclusion, and individual job/step results here. Do not infer the tested SHA from PR head or commit message.
+
+## OpenCode WSL verification handoff
+
+**Run only after Arena pushes the remediation and records the new full PR head SHA in this file.** Use a clean worktree so local edits are preserved. Substitute the exact recorded SHA below; do not checkout a stale branch snapshot.
 
 ```bash
-./scripts/locked_sync.sh
-.venv/bin/ruff format --check .
-.venv/bin/ruff check .
-.venv/bin/python -m pytest -v
-.venv/bin/nexus-benchmark --help
-.venv/bin/nexus-benchmark list
-.venv/bin/nexus-benchmark validate
-./scripts/wheel_smoke_test.sh
-uv lock --project apps/phase1a --check
-uv sync --project apps/phase1a --locked --group dev
-apps/phase1a/.venv/bin/python -m pytest apps/phase1a/tests -v
+# From the existing repository, preserve local edits and create a separate worktree.
+git status --short --branch
+git fetch origin
+git worktree add --detach ../NEXUS-phase1a-verify <EXACT_REMEDIATION_SHA>
+cd ../NEXUS-phase1a-verify
+git status --short --branch
+git rev-parse HEAD
+# Confirm HEAD equals the exact SHA recorded above and the worktree is clean.
+
+docker version
+docker compose version
+scripts/phase1a.sh down
 scripts/phase1a.sh validate
 scripts/phase1a.sh smoke
-scripts/phase1a.sh logs
+
+docker compose -f apps/phase1a/compose.yaml --project-directory apps/phase1a ps --all
+docker compose -f apps/phase1a/compose.yaml --project-directory apps/phase1a config --format json
+# Inspect published ports: only api-gateway should publish 127.0.0.1:8000.
+docker compose -f apps/phase1a/compose.yaml --project-directory apps/phase1a logs --no-color --timestamps otel-collector
 scripts/phase1a.sh down
+docker compose -f apps/phase1a/compose.yaml --project-directory apps/phase1a ps --all
 ```
 
-Confirm the Compose smoke reports all five service identities and actual OTLP trace, metric, and log records from Collector stdout; check container health and that only the gateway publishes to loopback; confirm no containers, networks, or generated telemetry remain after `down`. Report any mismatch before merge. Phase 1B, storage selection, diagnosis scoring, production readiness and all other incident cases remain out of scope.
+Confirm all services became healthy; all scenario passes (three scenarios twice) succeeded; current-run trace/metric/log evidence matches the documented signal/service matrix; only gateway has the loopback host binding; and no project containers/network or generated telemetry remain after scoped `down`. Do not run global Docker prune or delete unrelated resources. Capture command output, report mismatches without local edits, and leave this status PENDING until the result is supplied.
+
+## Remaining gates
+
+Exact-head hosted CI, including the Compose build/start/health and telemetry smoke against the two reviewed image pins, must finish successfully. Independent review and local WSL/Docker verification remain pending. No declaration of Phase 1A completion or merge recommendation is made here. Phase 1B and all later services/scenarios remain out of scope.
